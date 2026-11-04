@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.amplify/
+amplify_outputs.json
+public/amplify_outputs.json
+.env*
+!.env.example
+*.log
+.DS_Store
+cdk.out/
+
+# Extractos de adjuntos internos: exclusivamente locales, nunca publicar.
+docs/source/
