@@ -8,6 +8,10 @@ Ocho perfiles; cuatro modalidades; expedientes de ejemplo en distintas etapas; p
 
 Los archivos se guardan en IndexedDB local. El mock funciona por defecto, sin claves, cuenta AWS ni llamadas a SICAS/GNP/correo. Los textos completos de los adjuntos internos se excluyen del historial de Git.
 
+## Separación frontend/backend
+
+Amplify Hosting compila únicamente el paquete React/Vite de la raíz. Infraestructura, dependencias Gen 2/CDK y pruebas de API se conservan en `backend/`. No hay `amplify/backend.ts`, dependencias `@aws-amplify/backend` ni comandos `ampx` en el paquete raíz. El backend se conectará y desplegará por separado.
+
 ## Implementado en código
 
 - Interfaz responsive basada en el mockup: acceso, tablero, bandeja con filtros/paginación/exportación, alta guiada, checklist, carga, expediente, historial, revisión, gestión GNP, reportes, integración y configuración.

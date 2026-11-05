@@ -22,34 +22,42 @@ npm run build
 
 ## Arquitectura AWS
 
-Amplify Gen 2 + Hosting para React/Vite; Cognito con usuarios provisionados administrativamente, contraseña robusta y MFA TOTP; API Gateway HTTP con JWT; Lambda para expedientes; DynamoDB con índices por propietario y responsable, control de versión y auditoría transaccional; S3 privado y versionado para documentos con URLs firmadas y SHA-256; SQS, DLQ y Lambda de integración SICAS; GuardDuty Malware Protection, EventBridge y Lambda de veredictos por versión de archivo. Infraestructura en `amplify/backend.ts`.
+Amplify Hosting publica exclusivamente React/Vite desde la raíz de este repositorio. El backend de API Gateway, Lambdas, DynamoDB, S3 y Cognito se conserva en `backend/` como proyecto independiente. Las definiciones previas Gen 2 están en `backend/amplify/` y no se instalan, compilan ni despliegan durante la publicación del frontend. La conexión productiva y el despliegue del backend se realizarán por separado.
 
 Los perfiles administrativos no reciben acceso clínico implícito. El analista/aprobador sólo puede operar expedientes asignados dentro de su organización. El asegurado accede a sus propios casos. El servidor deriva usuario, empresa y rol del token Cognito y rechaza perfiles ambiguos. Asignar un aprobador requiere reasignación administrativa y registro previo del personal autorizado.
 
 La aprobación interna requiere un aprobador distinto del solicitante y revisor; el ingreso a GNP exige folio y archivo de respaldo. Cierre no equivale a pago. Los archivos quedan en cuarentena hasta un veredicto de seguridad limpio para su versión exacta; no hay liberación manual desde el cliente.
 
-## Conectar a AWS
+## Publicar el frontend desde GitHub
 
-Requisitos: Node 22+, cuenta AWS, región y perfil con permisos de Amplify/CDK, acceso al repositorio GitHub y autorización del proyecto.
+1. En Amplify Hosting crear una aplicación nueva: **Create new app → GitHub**. Una aplicación previamente detectada como Gen 2 puede conservar su configuración; usar una aplicación nueva para esta separación.
+2. Autorizar `johanasilva78/paramitasiniestros` y seleccionar la rama `main`.
+3. Usar la raíz del repositorio; no seleccionar `backend/` ni activar monorepo.
+4. Mantener el `amplify.yml` del repositorio. Comando: `VITE_DEMO_MODE=true npm run build`. Directorio de salida: `dist`.
+5. La aplicación debe configurarse como frontend estático React/Vite, sin despliegue de backend ni pipeline `ampx`. No agregar secretos ni permisos CDK para publicar este mock.
+6. Pulsar **Save and deploy** y abrir la URL HTTPS generada. Los nuevos commits de `main` activarán compilaciones automáticas si esta opción está habilitada.
 
-1. Configurar el perfil AWS sin guardar credenciales en el repositorio.
-2. Ejecutar `PORTAL_ORIGIN=http://localhost:5173 npx ampx sandbox --profile PERFIL` para un ambiente de desarrollo.
-3. Ejecutar `node scripts/copy-outputs.mjs` y cambiar `.env.local` a `VITE_DEMO_MODE=false`.
-4. Provisionar usuarios Cognito con `custom:tenant` y exactamente un grupo. Crear el registro `STAFF#<sub>` en DynamoDB para personal asignable, como se detalla en [operación](docs/OPERACION.md).
-5. Para hosting: conectar `https://github.com/johanasilva78/paramitasiniestros.git` a Amplify Hosting mediante GitHub App, seleccionar `main`. Para activar el backend real, reemplazar `amplify.yml` por el contenido de `amplify.fullstack.yml` y revisar los permisos y ambiente antes de ejecutar. Configurar `PORTAL_ORIGIN=https://<dominio-del-portal>` y `VITE_DEMO_MODE=false` en el ambiente de compilación.
-6. Configurar una regla de reescritura SPA a `/index.html` (200) para rutas del frontend. La API usa su propio dominio de API Gateway.
-7. Ejecutar pruebas de aceptación y cerrar dependencias antes del uso con datos reales.
+`amplify.yml` sólo instala el paquete raíz y publica `dist`. Las dependencias de Gen 2/CDK y los comandos de despliegue están exclusivamente en `backend/package.json`. Los cambios no modifican los permisos de la cuenta AWS. El hosting sigue necesitando los permisos normales de Amplify; si la consola conserva una detección Gen 2, revisar la aplicación y raíz seleccionadas antes de continuar.
 
-El pipeline predeterminado `amplify.yml` sólo compila y publica el mock estático: no despliega backend. La alternativa `amplify.fullstack.yml` despliega el backend, copia sus outputs públicos de configuración y compila el frontend en modo AWS. Nunca introducir claves de AWS o secretos SICAS en variables `VITE_*`.
+## Preparación del backend independiente
 
-Referencias de implementación: [recursos CDK en Amplify](https://docs.amplify.aws/react/build-a-backend/add-aws-services/custom-resources/), [REST API con Amplify Gen 2](https://docs.amplify.aws/react/build-a-backend/add-aws-services/rest-api/set-up-rest-api/).
+```sh
+npm ci
+npm ci --prefix backend
+npm run typecheck --prefix backend
+npm test --prefix backend
+```
+
+Consultar [backend/README.md](backend/README.md). La preparación y las pruebas no crean recursos AWS. En la conexión real, la configuración pública de Cognito/API se suministrará al frontend y se establecerá `VITE_DEMO_MODE=false`. Nunca introducir credenciales de AWS o secretos SICAS en variables `VITE_*`.
+
+Referencia: [configuración de compilación de Amplify Hosting](https://docs.aws.amazon.com/amplify/latest/userguide/build-settings.html).
 
 ## Estructura
 
 - `src/`: interfaz, autenticación y cliente REST/demo.
 - `shared/domain.ts`: modalidades, matriz documental, permisos y estados.
-- `amplify/`: infraestructura y Lambdas.
-- `tests/`: pruebas de dominio y aislamiento de acceso.
-- `docs/`: alcance, fuentes extraídas, operación y pendientes verificables.
+- `backend/`: infraestructura, Lambdas, dependencias y pruebas del backend, separadas del frontend.
+- `tests/`: pruebas de dominio y mock del frontend. Las pruebas de API y análisis de documentos están en `backend/tests/`.
+- `docs/`: alcance, operación y pendientes verificables.
 
 Los adjuntos originales permanecen fuera del repositorio. Los textos extraídos se conservan únicamente en la carpeta local ignorada `docs/source/` y se excluyen de todo el historial publicado. El repositorio sólo incluye código, datos sintéticos y documentación técnica.

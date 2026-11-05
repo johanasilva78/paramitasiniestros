@@ -5,7 +5,7 @@ import {
   GetCommand,
   TransactWriteCommand,
 } from "@aws-sdk/lib-dynamodb";
-import type { Claim } from "../../../shared/domain";
+import type { Claim } from "../../../../shared/domain";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 interface ScanDetail {
   scanStatus: string;

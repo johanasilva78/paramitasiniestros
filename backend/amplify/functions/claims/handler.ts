@@ -29,7 +29,7 @@ import {
   type Actor,
   type Claim,
   type Role,
-} from "../../../shared/domain";
+} from "../../../../shared/domain";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });

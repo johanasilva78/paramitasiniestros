@@ -11,3 +11,5 @@ cdk.out/
 
 # Extractos de adjuntos internos: exclusivamente locales, nunca publicar.
 docs/source/
+
+paramita-frontend.zip
