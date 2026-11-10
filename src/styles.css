@@ -140,10 +140,12 @@ small {
   color: #07315d;
   white-space: nowrap;
 }
-.brand span {
-  font-family: Georgia, serif;
-  font-size: 32px;
-  letter-spacing: -1.4px;
+.brand-logo {
+  display: block;
+  width: 200px;
+  height: auto;
+  max-width: 100%;
+  flex-shrink: 0;
 }
 .header-right {
   display: flex;
@@ -156,23 +158,8 @@ small {
   gap: 8px;
   color: #133d67;
 }
-.partner > b {
-  font-family: Georgia, serif;
-  font-size: 45px;
-  line-height: 1;
-  letter-spacing: -7px;
-  margin-right: 8px;
-}
-.partner > span {
-  font-size: 13px;
-  letter-spacing: 2.4px;
-  font-weight: 600;
-}
-.partner small {
-  display: block;
-  font-size: 5px;
-  letter-spacing: 0.8px;
-  margin-top: 5px;
+.partner .brand-logo {
+  width: 210px;
 }
 .header-divider {
   width: 1px;
@@ -1270,11 +1257,8 @@ footer {
   font-size: 9px;
   background: #fffefa;
 }
-footer .brand span {
-  font-size: 22px;
-}
-footer .brand svg {
-  width: 26px;
+footer .brand-logo {
+  width: 145px;
 }
 .toast {
   position: fixed;
@@ -1506,11 +1490,8 @@ footer .brand svg {
     height: 73px;
     padding: 0 5%;
   }
-  .header .brand span {
-    font-size: 27px;
-  }
-  .header .brand svg {
-    width: 30px;
+  .header .brand-logo {
+    width: 165px;
   }
   .header-right {
     gap: 10px;

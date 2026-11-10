@@ -1,6 +1,6 @@
 import { MockWorkspace } from "./MockWorkspace";
 import * as mock from "./mock";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import {
   type LucideIcon,
   Activity,
@@ -67,11 +67,39 @@ const shortId = (id: string) =>
   id.startsWith("demo-")
     ? `SIN-2026-${id.slice(-4)}`
     : `SIN-${id.slice(0, 8).toUpperCase()}`;
+function BrandLogo({ partner = false }: { partner?: boolean }) {
+  const filterId = useId();
+  return (
+    <svg
+      className="brand-logo"
+      role="img"
+      aria-label={partner ? "Waspert · Premium Insurance Brokers" : "Paramita"}
+      viewBox={partner ? "16 14 306 76" : "20 16 240 66"}
+      width={partner ? 306 : 240}
+      height={partner ? 76 : 66}
+    >
+      <defs>
+        {/* Remove the screenshots' pale backdrop without redrawing the logos. */}
+        <filter id={filterId} colorInterpolationFilters="sRGB">
+          <feColorMatrix
+            type="matrix"
+            values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  -1 -1 -1 0 2.65"
+          />
+        </filter>
+      </defs>
+      <image
+        href={partner ? "/logos/waspert.png" : "/logos/paramita.png"}
+        width={partner ? 336 : 278}
+        height={partner ? 100 : 98}
+        filter={`url(#${filterId})`}
+      />
+    </svg>
+  );
+}
 function Brand() {
   return (
     <div className="brand">
-      <Flower size={36} strokeWidth={1.4} />
-      <span>Paramita</span>
+      <BrandLogo />
     </div>
   );
 }
@@ -261,10 +289,7 @@ export function App() {
         <Brand />
         <div className="header-right">
           <span className="partner">
-            <b>W</b>
-            <span>
-              WASPERT<small>PROTEGEMOS LO QUE IMPORTA</small>
-            </span>
+            <BrandLogo partner />
           </span>
           <div className="header-divider" />
           <button
@@ -1951,10 +1976,7 @@ function Login({
       </section>
       <section className="login-form">
         <span className="partner">
-          <b>W</b>
-          <span>
-            WASPERT<small>PROTEGEMOS LO QUE IMPORTA</small>
-          </span>
+          <BrandLogo partner />
         </span>
         <form onSubmit={submit}>
           <span className="stat-icon blue">
