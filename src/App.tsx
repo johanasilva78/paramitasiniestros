@@ -1072,14 +1072,20 @@ function NewClaim({
           </p>
           {step === 0 && (
             <div className="form-fields">
-              <Field label="Aseguradora *">
-                <select disabled>
-                  <option>GNP Seguros</option>
+              <Field
+                label="Aseguradora *"
+                hint="Actualmente está disponible GNP Seguros."
+              >
+                <select name="insurer" required defaultValue="GNP">
+                  <option value="GNP">GNP Seguros</option>
                 </select>
               </Field>
-              <Field label="Producto *">
-                <select disabled>
-                  <option>Gastos Médicos Mayores</option>
+              <Field
+                label="Producto *"
+                hint="Producto disponible para los trámites de GNP."
+              >
+                <select name="product" required defaultValue="GMM">
+                  <option value="GMM">Gastos Médicos Mayores</option>
                 </select>
               </Field>
               <Field label="Tipo de trámite *">
