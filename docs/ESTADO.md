@@ -1,6 +1,16 @@
 # Estado verificable de la implementación
 
-La instrucción vigente es construir por ahora un mock completo e ir sustituyendo simulaciones por integraciones reales. El alcance final sigue siendo completo; no se considera un piloto. No se despliegan servicios AWS en esta entrega.
+La instrucción vigente es construir por ahora un mock completo e ir sustituyendo simulaciones por integraciones reales. El alcance final sigue siendo completo; no se considera un piloto. El frontend se publica en Amplify Hosting; el backend y las integraciones reales siguen pendientes de conexión y validación.
+
+## Reconciliación con el SOW · 17/11/2026
+
+Se incorpora el inventario de 18 aseguradoras y siete ramos, con validación de combinaciones tanto en la captura como en API. Se guardan aseguradora, ramo, producto declarado, relación titular/dependiente y trámite. El SOW no proporciona catálogo de productos comerciales ni checklists completos para todas las combinaciones.
+
+GNP/GMM mantiene sus cuatro modalidades y matriz documental de referencia. Las demás combinaciones permiten registrar aviso y soportes para revisión manual, con aprobación, ingreso y cierre bloqueados hasta contar con requisitos y canal aprobados. El formulario, bandeja, búsqueda, filtros, CSV, detalle, resumen administrativo y reportes distinguen cobertura. Documentos permite consultar el inventario completo y limita el checklist GNP a su combinación.
+
+La lectura compatible conserva los expedientes previos como GNP/GMM, su folio, archivos y versiones; normaliza los estados de ingreso a aseguradora. Los ejemplos nuevos incluyen AXA/Autos, Thona/Vida, AIG/Daños y Bupa/GMM; en navegadores con datos previos se conservan éstos, y se pueden crear avisos nuevos o reiniciar los datos ficticios desde Configuración.
+
+Esto resuelve la estructura multiaseguradora y la recepción, no acredita automatización aprobada para todas las aseguradoras. Siguen pendientes integración SICAS, canales reales, validación automática documental, permisos detallados por póliza/aseguradora, SLA/VIP, textos legales y UAT.
 
 ## Demostración disponible
 

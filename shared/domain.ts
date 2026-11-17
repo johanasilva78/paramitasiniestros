@@ -1,9 +1,19 @@
 import { z } from "zod";
+import {
+  insurerIds,
+  insurers,
+  hasGnpChecklist,
+  coverageOf,
+  pendingChecklistVersion,
+  type Coverage,
+} from "./coverage";
+export { ZodError as DomainValidationError } from "zod";
 export const modalities = {
   reimbursement: "Reembolso de gastos",
   surgery: "Programación de cirugía",
   medication: "Programación de medicamentos",
   deductible: "Devolución de deducible / coaseguro",
+  notice: "Aviso de siniestro · revisión manual",
 } as const;
 export type Modality = keyof typeof modalities;
 export const checklistVersion = "gnp-2026-11-04-v1-provisional";
@@ -36,7 +46,55 @@ export const checklist = rows.map(([group, label, marks], i) => ({
 }));
 export function documentsFor(modality: Modality) {
   const col = Object.keys(modalities).indexOf(modality);
+  if (modality === "notice") return [];
   return checklist.map((r) => ({ ...r, mark: r.marks[col] }));
+}
+export function documentsForClaim(c: Coverage & { modality: Modality }) {
+  if (hasGnpChecklist(c) && c.modality !== "notice")
+    return documentsFor(c.modality);
+  return [
+    {
+      id: "SUPPORT",
+      label: "Documentos de soporte de tu solicitud",
+      group: "Soporte",
+      mark: "C" as Mark,
+    },
+  ];
+}
+export function checklistVersionFor(c: Coverage & { modality: Modality }) {
+  return hasGnpChecklist(c) && c.modality !== "notice"
+    ? checklistVersion
+    : pendingChecklistVersion;
+}
+export function procedureLabel(
+  c: Pick<Claim, "modality" | "requestedProcedure">,
+) {
+  return c.modality === "notice"
+    ? c.requestedProcedure || modalities.notice
+    : modalities[c.modality];
+}
+export function submissionOf(c: Claim) {
+  return c.submission ?? c.gnp;
+}
+export function isReceipt(type: string) {
+  return ["INSURER-RECEIPT", "GNP-RECEIPT"].includes(type);
+}
+export function isResolution(type: string) {
+  return ["INSURER-RESULT", "GNP-RESULT"].includes(type);
+}
+export function normalizeClaim(c: Claim): Claim {
+  return {
+    ...c,
+    ...coverageOf(c),
+    submission: submissionOf(c),
+    status:
+      c.status === "Ingresado en GNP" ? "Ingresado en aseguradora" : c.status,
+    events: c.events.map((e) => ({
+      ...e,
+      status:
+        e.status === "Ingresado en GNP" ? "Ingresado en aseguradora" : e.status,
+    })),
+  };
 }
 export const statuses = [
   "Borrador",
@@ -47,6 +105,7 @@ export const statuses = [
   "Requiere revisión",
   "Aprobado internamente",
   "Ingresado en GNP",
+  "Ingresado en aseguradora",
   "En espera",
   "Observado",
   "Finalizado",
@@ -62,6 +121,7 @@ export const publicStatus = (s: Status): string =>
     "Requiere revisión": "En revisión",
     "Aprobado internamente": "En revisión",
     "Ingresado en GNP": "En trámite con aseguradora",
+    "Ingresado en aseguradora": "En trámite con aseguradora",
     "En espera": "En trámite con aseguradora",
     Observado: "Observado",
     Finalizado: "Resultado informado",
@@ -96,7 +156,7 @@ export interface Attachment {
   scannedVersion?: string;
   scan: "PENDING" | "CLEAN" | "INFECTED";
 }
-export interface Claim {
+export interface Claim extends Coverage {
   id: string;
   tenant: string;
   owner: string;
@@ -125,6 +185,7 @@ export interface Claim {
     date: string;
     actor: string;
   };
+  submission?: Claim["gnp"];
   resolution?: {
     result: string;
     detail: string;
@@ -136,7 +197,26 @@ export interface Claim {
 }
 export const claimInput = z
   .object({
-    modality: z.enum(["reimbursement", "surgery", "medication", "deductible"]),
+    insurer: z.enum(insurerIds),
+    branch: z.enum([
+      "gmm",
+      "surgery",
+      "auto",
+      "life",
+      "property",
+      "cargo",
+      "liability",
+    ]),
+    product: z.string().trim().min(3).max(120),
+    insuredRelationship: z.enum(["holder", "dependent"]),
+    requestedProcedure: z.string().trim().max(150).optional(),
+    modality: z.enum([
+      "reimbursement",
+      "surgery",
+      "medication",
+      "deductible",
+      "notice",
+    ]),
     insured: z.string().trim().min(3).max(150),
     policy: z.string().trim().min(3).max(80),
     eventDate: z
@@ -153,6 +233,35 @@ export const claimInput = z
     subsequent: z.boolean(),
     previousReference: z.string().max(100).optional(),
     consent: z.literal(true),
+  })
+  .superRefine((c, ctx) => {
+    if (!insurers.find((i) => i.id === c.insurer)?.branches.includes(c.branch))
+      ctx.addIssue({
+        code: "custom",
+        path: ["branch"],
+        message: "Ramo no disponible para esta aseguradora en la matriz SOW",
+      });
+    if (!hasGnpChecklist(c) && c.modality !== "notice")
+      ctx.addIssue({
+        code: "custom",
+        path: ["modality"],
+        message: "Esta cobertura requiere aviso para revisión manual",
+      });
+    if (hasGnpChecklist(c) && c.modality === "notice")
+      ctx.addIssue({
+        code: "custom",
+        path: ["modality"],
+        message: "Selecciona una modalidad GNP/GMM",
+      });
+    if (
+      c.modality === "notice" &&
+      (!c.requestedProcedure || c.requestedProcedure.length < 3)
+    )
+      ctx.addIssue({
+        code: "custom",
+        path: ["requestedProcedure"],
+        message: "Describe el trámite solicitado",
+      });
   })
   .refine(
     (x) => !x.subsequent || !!x.previousReference,
@@ -173,6 +282,7 @@ export function canOperate(a: Actor, c: Claim) {
   );
 }
 export function visibleClaim(a: Actor, c: Claim) {
+  c = normalizeClaim(c);
   if (canOperate(a, c)) return c;
   const { internalNotes, reviewer, ...rest } = c;
   return {
@@ -195,8 +305,13 @@ export function transition(a: Actor, c: Claim, next: Status, reason: string) {
       "Aprobado internamente",
     ],
     "Requiere revisión": ["En validación", "Pendiente de documentos"],
-    "Aprobado internamente": ["Ingresado en GNP", "Pendiente de documentos"],
+    "Aprobado internamente": [
+      "Ingresado en aseguradora",
+      "Ingresado en GNP",
+      "Pendiente de documentos",
+    ],
     "Ingresado en GNP": ["En espera", "Observado", "Finalizado"],
+    "Ingresado en aseguradora": ["En espera", "Observado", "Finalizado"],
     "En espera": ["Observado", "Finalizado"],
     Observado: ["Pendiente de documentos", "En espera", "Finalizado"],
   };
@@ -210,9 +325,24 @@ export function transition(a: Actor, c: Claim, next: Status, reason: string) {
       c.owner === a.sub)
   )
     throw new Error("Se requiere aprobador distinto del revisor y solicitante");
-  if (next === "Ingresado en GNP" && !c.gnp)
-    throw new Error("Registra folio y evidencia GNP");
-  if (next === "Finalizado" && (!c.gnp || !c.resolution))
+  if (
+    !hasGnpChecklist(c) &&
+    [
+      "Aprobado internamente",
+      "Ingresado en aseguradora",
+      "Ingresado en GNP",
+      "Finalizado",
+    ].includes(next)
+  )
+    throw new Error(
+      "Falta aprobar el checklist y el canal de esta cobertura. Mantén el caso en revisión manual.",
+    );
+  if (
+    ["Ingresado en GNP", "Ingresado en aseguradora"].includes(next) &&
+    !submissionOf(c)
+  )
+    throw new Error("Registra folio y evidencia de la aseguradora");
+  if (next === "Finalizado" && (!submissionOf(c) || !c.resolution))
     throw new Error(
       "Registra resolución externa y evidencia específica de cierre",
     );

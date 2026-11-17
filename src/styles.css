@@ -291,6 +291,25 @@ small {
   max-width: 390px;
   font-size: 12px;
 }
+.coverage-catalog,
+.coverage-report {
+  margin-bottom: 24px;
+}
+.coverage-selectors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.coverage-catalog summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+}
+.detail-title .insurer-tag,
+.guide-panel .insurer-tag {
+  white-space: normal;
+}
 .primary,
 .secondary {
   display: inline-flex;
@@ -673,6 +692,7 @@ tr:last-child td {
 }
 .filters {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin: 24px 0;
@@ -682,6 +702,7 @@ tr:last-child td {
   align-items: center;
   gap: 8px;
   flex: 1;
+  min-width: min(260px, 100%);
   border: 1px solid #e0dfdb;
   border-radius: 6px;
   padding: 0 11px;

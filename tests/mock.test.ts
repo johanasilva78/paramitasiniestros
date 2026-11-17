@@ -13,7 +13,17 @@ Object.defineProperty(globalThis, "localStorage", {
 beforeEach(() => memory.clear());
 test("Mock incluye cuatro modalidades, expedientes activos y cierre con evidencia", () => {
   const cases = mock.seedClaims();
-  assert.equal(new Set(cases.map((c) => c.modality)).size, 4);
+  assert.equal(
+    new Set(cases.filter((c) => c.insurer === "gnp").map((c) => c.modality))
+      .size,
+    4,
+  );
+  assert.ok(
+    cases.some(
+      (c) =>
+        c.insurer === "axa" && c.branch === "auto" && c.modality === "notice",
+    ),
+  );
   const closed = cases.find((c) => c.status === "Finalizado");
   assert.ok(closed?.gnp && closed.resolution);
   assert.ok(

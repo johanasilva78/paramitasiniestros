@@ -1,6 +1,6 @@
-# Paramita · Portal de Siniestros GNP
+# Paramita · Portal de Siniestros
 
-Mock interactivo del alcance completo GNP/GMM, **no piloto**. Conforme a la instrucción vigente, todas las integraciones se simulan por ahora y se mejorarán progresivamente. Incluye cuatro modalidades desde el inicio. La infraestructura AWS se conserva preparada para conexión posterior: consultar [estado real y dependencias](docs/ESTADO.md).
+Mock interactivo multiaseguradora, **no piloto**, con inventario de las 18 aseguradoras y siete ramos del SOW. La captura conserva aseguradora, ramo, producto declarado, titular/dependiente y trámite. GNP/GMM mantiene sus cuatro modalidades y checklist de referencia; las demás combinaciones admiten avisos y soportes para revisión manual, con requisitos y canal pendientes de aprobación. Todas las integraciones se simulan por ahora. La infraestructura AWS se conserva preparada para conexión posterior: consultar [estado real y dependencias](docs/ESTADO.md).
 
 ## Ejecutar localmente
 
@@ -9,11 +9,11 @@ npm ci
 npm run dev
 ```
 
-El modo mock está habilitado por defecto y funciona sin cuenta AWS ni servicios externos. Incluye selector de ocho perfiles, expedientes ficticios para las cuatro modalidades, carga y descarga de archivos locales, revisión documental, aprobación, registro GNP, resolución y cierre, pólizas, notificaciones, configuración, conciliación manual y simulaciones SICAS con éxito, timeout y reintentos.
+El modo mock está habilitado por defecto y funciona sin cuenta AWS ni servicios externos. Incluye selector de ocho perfiles, expedientes ficticios GNP/GMM y avisos AXA/Autos, Thona/Vida, AIG/Daños y Bupa/GMM; carga y descarga de archivos locales, revisión documental, aprobación, folio, resolución y cierre, pólizas de ejemplo GNP, notificaciones, configuración, conciliación manual y simulaciones SICAS con éxito, timeout y reintentos. La aprobación, ingreso y cierre de coberturas sin requisitos definidos están bloqueados. Las vistas, filtros, CSV y reportes distinguen aseguradora y ramo.
 
 Los expedientes y parámetros se guardan en localStorage; los archivos adjuntos se guardan en IndexedDB exclusivamente en este navegador. Los PDF precargados se generan como ejemplos ficticios. Para restablecer la demostración: perfil Administrador → Configuración → Datos de prueba. Usar archivos ficticios.
 
-Para conectar AWS, establecer explícitamente `VITE_DEMO_MODE=false`. El selector de demostración y las vistas mock no se muestran en ese modo. Ninguna simulación de éxito acredita una entrega a SICAS ni una respuesta real de GNP.
+Para conectar AWS, establecer explícitamente `VITE_DEMO_MODE=false`. El selector de demostración y las vistas mock no se muestran en ese modo. Ninguna simulación de éxito acredita una entrega a SICAS ni una respuesta real de una aseguradora.
 
 ```sh
 npm test
@@ -26,7 +26,7 @@ Amplify Hosting publica exclusivamente React/Vite desde la raíz de este reposit
 
 Los perfiles administrativos no reciben acceso clínico implícito. El analista/aprobador sólo puede operar expedientes asignados dentro de su organización. El asegurado accede a sus propios casos. El servidor deriva usuario, empresa y rol del token Cognito y rechaza perfiles ambiguos. Asignar un aprobador requiere reasignación administrativa y registro previo del personal autorizado.
 
-La aprobación interna requiere un aprobador distinto del solicitante y revisor; el ingreso a GNP exige folio y archivo de respaldo. Cierre no equivale a pago. Los archivos quedan en cuarentena hasta un veredicto de seguridad limpio para su versión exacta; no hay liberación manual desde el cliente.
+La aprobación interna requiere un aprobador distinto del solicitante y revisor; el ingreso a la aseguradora exige folio y archivo de respaldo. Cierre no equivale a pago. Los archivos quedan en cuarentena hasta un veredicto de seguridad limpio para su versión exacta; no hay liberación manual desde el cliente.
 
 ## Publicar el frontend desde GitHub
 
@@ -55,7 +55,8 @@ Referencia: [configuración de compilación de Amplify Hosting](https://docs.aws
 ## Estructura
 
 - `src/`: interfaz, autenticación y cliente REST/demo.
-- `shared/domain.ts`: modalidades, matriz documental, permisos y estados.
+- `shared/coverage.ts`: inventario SOW de aseguradoras y ramos; compatibilidad de expedientes previos GNP/GMM.
+- `shared/domain.ts`: captura validada, modalidades, matriz documental, permisos y estados.
 - `backend/`: infraestructura, Lambdas, dependencias y pruebas del backend, separadas del frontend.
 - `tests/`: pruebas de dominio y mock del frontend. Las pruebas de API y análisis de documentos están en `backend/tests/`.
 - `docs/`: alcance, operación y pendientes verificables.

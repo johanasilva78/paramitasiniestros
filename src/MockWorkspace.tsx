@@ -16,10 +16,12 @@ import * as mock from "./mock";
 import {
   modalities,
   publicStatus,
+  normalizeClaim,
   type Claim,
   type Role,
   type Modality,
 } from "../shared/domain";
+import { insurerName, branches, coverageOf } from "../shared/coverage";
 export function MockWorkspace({
   view,
   role,
@@ -43,7 +45,9 @@ export function MockWorkspace({
     }),
     [selected, setSelected] = useState<Record<string, string>>({}),
     [reasons, setReasons] = useState<Record<string, string>>({});
-  const all = mock.stored<Claim[]>(mock.mockKeys.claims, mock.seedClaims());
+  const all = mock
+    .stored<Claim[]>(mock.mockKeys.claims, mock.seedClaims())
+    .map(normalizeClaim);
   function refresh() {
     setRevision(revision + 1);
     onRefresh();
@@ -179,9 +183,9 @@ export function MockWorkspace({
                   .length,
               },
               {
-                label: "En GNP",
+                label: "En aseguradora",
                 n: all.filter((c) =>
-                  ["Ingresado en GNP", "En espera"].includes(c.status),
+                  ["Ingresado en aseguradora", "En espera"].includes(c.status),
                 ).length,
               },
               {
@@ -209,6 +213,7 @@ export function MockWorkspace({
                   <tr>
                     <th>Referencia</th>
                     <th>Persona ficticia</th>
+                    <th>Aseguradora / ramo</th>
                     <th>Estado público</th>
                     <th>Último movimiento</th>
                   </tr>
@@ -218,6 +223,9 @@ export function MockWorkspace({
                     <tr key={c.id}>
                       <td>{c.id.toUpperCase()}</td>
                       <td>{c.insured}</td>
+                      <td>
+                        {insurerName(c)} · {branches[coverageOf(c).branch]}
+                      </td>
                       <td>
                         <span className="badge blue">
                           {publicStatus(c.status)}
@@ -452,27 +460,29 @@ export function MockWorkspace({
                 de esta demostración.
               </p>
               <div className="catalog-cards">
-                {Object.entries(modalities).map(([id, label]) => (
-                  <label className="mock-option" key={id}>
-                    <ShieldCheck size={25} />
-                    <b>{label}</b>
-                    <span>
-                      <input
-                        type="checkbox"
-                        checked={config.enabled.includes(id as Modality)}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            enabled: e.target.checked
-                              ? [...config.enabled, id as Modality]
-                              : config.enabled.filter((x) => x !== id),
-                          })
-                        }
-                      />{" "}
-                      Habilitado
-                    </span>
-                  </label>
-                ))}
+                {Object.entries(modalities)
+                  .filter(([id]) => id !== "notice")
+                  .map(([id, label]) => (
+                    <label className="mock-option" key={id}>
+                      <ShieldCheck size={25} />
+                      <b>{label}</b>
+                      <span>
+                        <input
+                          type="checkbox"
+                          checked={config.enabled.includes(id as Modality)}
+                          onChange={(e) =>
+                            setConfig({
+                              ...config,
+                              enabled: e.target.checked
+                                ? [...config.enabled, id as Modality]
+                                : config.enabled.filter((x) => x !== id),
+                            })
+                          }
+                        />{" "}
+                        Habilitado
+                      </span>
+                    </label>
+                  ))}
               </div>
               <button className="primary" onClick={save}>
                 <Save size={16} />

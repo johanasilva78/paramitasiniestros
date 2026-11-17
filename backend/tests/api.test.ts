@@ -35,13 +35,14 @@ const sample = {
   reviewer: "reviewer",
 };
 let commands: unknown[] = [];
+let coverageOverride: Record<string, unknown> = {};
 DynamoDBDocumentClient.prototype.send = async function (command: unknown) {
   commands.push(command);
   if (command instanceof GetCommand) {
     return {
       Item:
         command.input.Key?.pk === sample.pk
-          ? structuredClone(sample)
+          ? structuredClone({ ...sample, ...coverageOverride })
           : undefined,
     };
   }
@@ -53,6 +54,7 @@ DynamoDBDocumentClient.prototype.send = async function (command: unknown) {
 } as typeof DynamoDBDocumentClient.prototype.send;
 beforeEach(() => {
   commands = [];
+  coverageOverride = {};
 });
 async function invoke(
   sub: string,
@@ -61,11 +63,12 @@ async function invoke(
   path = `/claims/${sample.id}`,
   method = "GET",
   body?: unknown,
+  headers: Record<string, string> = {},
 ) {
   const event = {
     version: "2.0",
     rawPath: path,
-    headers: {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
     requestContext: {
       requestId: "test",
@@ -122,6 +125,10 @@ test("API: lectura asignada entrega revisión interna al analista autorizado", a
 });
 test("API: alta rechaza idempotency key ausente antes de crear registros", async () => {
   const r = await invoke("alice", "insured", "one", "/claims", "POST", {
+    insurer: "gnp",
+    branch: "gmm",
+    product: "Gastos Médicos Mayores",
+    insuredRelationship: "holder",
     modality: "reimbursement",
     insured: "Persona ficticia",
     policy: "TEST-123",
@@ -141,4 +148,98 @@ test("API: perfiles administrativos no enumeran casos clínicos", async () => {
   assert.equal(r.status, 200);
   assert.deepEqual(r.data.items, []);
   assert.equal(commands.length, 0);
+});
+const multiInput = {
+  insurer: "axa",
+  branch: "auto",
+  product: "Seguro Autos Ejemplo",
+  insuredRelationship: "holder",
+  modality: "notice",
+  requestedProcedure: "Reporte de accidente",
+  insured: "Persona ficticia",
+  policy: "POLIZA-123",
+  eventDate: "2026-01-01",
+  description: "Solicitud de prueba multiaseguradora",
+  subsequent: false,
+  consent: true,
+};
+test("API: persiste aseguradora, ramo, producto y requisito pendiente en un alta real", async () => {
+  const r = await invoke(
+    "alice",
+    "insured",
+    "one",
+    "/claims",
+    "POST",
+    multiInput,
+    { "idempotency-key": "12345678-1234-4123-8123-123456789abc" },
+  );
+  assert.equal(r.status, 201);
+  assert.equal(r.data.insurer, "axa");
+  assert.equal(r.data.branch, "auto");
+  assert.equal(r.data.product, multiInput.product);
+  assert.equal(r.data.checklistVersion, "sow-coverage-pending-v1");
+  const transaction = commands.find(
+    (c) => c instanceof TransactWriteCommand,
+  ) as TransactWriteCommand;
+  assert.equal(transaction.input.TransactItems?.[0].Put?.Item?.insurer, "axa");
+});
+test("API: rechaza ramo fuera de matriz sin crear expediente", async () => {
+  const r = await invoke(
+    "alice",
+    "insured",
+    "one",
+    "/claims",
+    "POST",
+    { ...multiInput, insurer: "thona" },
+    { "idempotency-key": "12345678-1234-4123-8123-123456789abc" },
+  );
+  assert.equal(r.status, 400);
+  assert.equal(
+    commands.some((c) => c instanceof TransactWriteCommand),
+    false,
+  );
+});
+test("API: otra aseguradora no recibe requisitos documentales GNP", async () => {
+  coverageOverride = multiInput;
+  const r = await invoke(
+    "alice",
+    "insured",
+    "one",
+    `/claims/${sample.id}/uploads`,
+    "POST",
+    {
+      type: "GNP-01",
+      name: "documento.pdf",
+      mime: "application/pdf",
+      size: 100,
+      sha256: "a".repeat(64),
+    },
+  );
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /Documento no aplicable/);
+});
+test("API: la cobertura pendiente no permite aprobación aunque exista revisor", async () => {
+  coverageOverride = {
+    ...multiInput,
+    status: "En validación",
+    assignee: "approver",
+  };
+  const r = await invoke(
+    "approver",
+    "approver",
+    "one",
+    `/claims/${sample.id}/transition`,
+    "POST",
+    {
+      status: "Aprobado internamente",
+      reason: "Revisión registrada",
+      version: 1,
+    },
+  );
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /Falta aprobar el checklist/);
+  assert.equal(
+    commands.some((c) => c instanceof TransactWriteCommand),
+    false,
+  );
 });

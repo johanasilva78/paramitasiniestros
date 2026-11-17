@@ -24,9 +24,11 @@ DynamoDB y S3 tienen política RETAIN; DynamoDB tiene recuperación a un punto e
 
 La cola almacena solicitudes, con operación idempotente en DynamoDB y dead letter queue. El worker actual marca BLOCKED / SICAS_CONTRACT_NOT_CONFIGURED. No consulta ni envía datos a un endpoint supuesto. Al integrar, implementar consulta de póliza, envío de expediente y archivos, acuse individual, reconciliación y reintentos idempotentes según contrato real. Mantener el estado de integración separado del estado de negocio. Un fallo no debe eliminar el expediente.
 
-## GNP
+## Aseguradoras y cobertura
 
-Gestión manual/asistida por canal autorizado. Adjuntar acuse en Documentos, registrar folio/canal/evidencia y después cambiar el estado a Ingresado en GNP. El portal no automatiza la navegación del portal de la aseguradora ni decide cobertura.
+El catálogo conserva las 18 aseguradoras y siete ramos del SOW, sin habilitar combinaciones no marcadas. El producto se declara según la póliza; requiere verificación, ya que el SOW no aporta un catálogo comercial. GNP/GMM conserva cuatro modalidades con checklist de referencia. Las demás combinaciones se reciben como avisos para revisión manual, con soporte opcional y requisitos pendientes; no pueden aprobarse, ingresarse ni cerrarse hasta definir y aprobar su configuración.
+
+Gestión manual/asistida por canal autorizado. Adjuntar acuse en Documentos, registrar folio/canal/evidencia y después cambiar el estado a Ingresado en aseguradora. El portal no automatiza la navegación de portales externos ni decide cobertura. Se mantienen compatibilidad de lectura con `gnp`, documentos `GNP-RECEIPT`/`GNP-RESULT` y estado anterior; los registros nuevos usan `submission` y evidencias `INSURER-RECEIPT`/`INSURER-RESULT`. Los expedientes sin campos de cobertura corresponden al alcance anterior GNP/GMM.
 
 ## Despliegue y recuperación
 

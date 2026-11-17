@@ -138,6 +138,10 @@ test("QA-18: discrepancias permiten revisión humana sin rechazo automático", (
   ));
 test("Captura exige consentimiento y referencia previa en subsecuentes", () => {
   const input = {
+    insurer: "gnp",
+    branch: "gmm",
+    product: "Gastos Médicos Mayores",
+    insuredRelationship: "holder",
     modality: claim.modality,
     insured: claim.insured,
     policy: claim.policy,
@@ -163,6 +167,10 @@ test("Captura exige consentimiento y referencia previa en subsecuentes", () => {
 test("Fecha de evento rechaza fechas inexistentes del calendario", () => {
   assert.equal(
     claimInput.safeParse({
+      insurer: "gnp",
+      branch: "gmm",
+      product: "Gastos Médicos Mayores",
+      insuredRelationship: "holder",
       modality: "reimbursement",
       insured: "Persona ficticia",
       policy: "TEST-123",

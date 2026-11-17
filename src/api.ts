@@ -11,7 +11,10 @@ import {
 } from "aws-amplify/auth";
 import {
   claimInput,
-  checklistVersion,
+  checklistVersionFor,
+  normalizeClaim,
+  isReceipt,
+  isResolution,
   transition,
   type Claim,
   type Actor,
@@ -26,7 +29,9 @@ export const demoActor: Actor = {
 };
 let actor = demoActor;
 function read(): Claim[] {
-  return mock.stored(mock.mockKeys.claims, mock.seedClaims());
+  return mock
+    .stored<Claim[]>(mock.mockKeys.claims, mock.seedClaims())
+    .map(normalizeClaim);
 }
 function write(claims: Claim[]) {
   localStorage.setItem("paramita-demo-v1", JSON.stringify(claims));
@@ -139,7 +144,7 @@ export async function listClaims() {
     items = items.concat(page.items);
     cursor = page.cursor;
   } while (cursor);
-  return items;
+  return items.map(normalizeClaim);
 }
 export async function getClaim(id: string) {
   if (demo) {
@@ -147,11 +152,15 @@ export async function getClaim(id: string) {
     if (!c) throw new Error("Expediente no encontrado");
     return c;
   }
-  return request<Claim>(`/claims/${id}`);
+  return normalizeClaim(await request<Claim>(`/claims/${id}`));
 }
 export async function createClaim(data: unknown, key: string) {
   const input = claimInput.parse(data);
-  if (demo && !mock.settings().enabled.includes(input.modality))
+  if (
+    demo &&
+    input.modality !== "notice" &&
+    !mock.settings().enabled.includes(input.modality)
+  )
     throw new Error(
       "Modalidad deshabilitada en la configuración de demostración",
     );
@@ -170,7 +179,7 @@ export async function createClaim(data: unknown, key: string) {
     createdAt: date,
     updatedAt: date,
     version: 1,
-    checklistVersion,
+    checklistVersion: checklistVersionFor(input),
     documents: [],
     events: [
       {
@@ -314,18 +323,14 @@ export async function sendSicas(c: Claim) {
     crypto.randomUUID(),
   );
 }
-export async function saveGnp(
+export async function saveSubmission(
   c: Claim,
   data: { folio: string; channel: string; evidenceId: string; date: string },
 ) {
-  if (!demo) return request<Claim>(`/claims/${c.id}/gnp`, "POST", data);
-  if (
-    !c.documents.some(
-      (d) => d.id === data.evidenceId && d.type === "GNP-RECEIPT",
-    )
-  )
-    throw new Error("Adjunta el acuse GNP");
-  const updated = { ...c, gnp: { ...data, actor: actor.sub } };
+  if (!demo) return request<Claim>(`/claims/${c.id}/submission`, "POST", data);
+  if (!c.documents.some((d) => d.id === data.evidenceId && isReceipt(d.type)))
+    throw new Error("Adjunta el acuse de la aseguradora");
+  const updated = { ...c, submission: { ...data, actor: actor.sub } };
   write(read().map((x) => (x.id === c.id ? updated : x)));
   mock.addNotice(c.id, "Expediente actualizado (simulación)");
   return updated;
@@ -365,11 +370,9 @@ export async function saveResolution(
 ) {
   if (!demo) return request<Claim>(`/claims/${c.id}/resolution`, "POST", data);
   if (
-    !c.documents.some(
-      (d) => d.id === data.evidenceId && d.type === "GNP-RESULT",
-    )
+    !c.documents.some((d) => d.id === data.evidenceId && isResolution(d.type))
   )
-    throw new Error("Adjunta la resolución GNP");
+    throw new Error("Adjunta la resolución de la aseguradora");
   const updated = { ...c, resolution: { ...data, actor: actor.sub } };
   write(read().map((x) => (x.id === c.id ? updated : x)));
   mock.addNotice(c.id, "Expediente actualizado (simulación)");

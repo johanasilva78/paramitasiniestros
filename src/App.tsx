@@ -1,6 +1,12 @@
 import { MockWorkspace } from "./MockWorkspace";
 import * as mock from "./mock";
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   type LucideIcon,
   Activity,
@@ -37,6 +43,11 @@ import * as api from "./api";
 import {
   modalities,
   documentsFor,
+  documentsForClaim,
+  procedureLabel,
+  submissionOf,
+  isReceipt,
+  isResolution,
   checklist,
   checklistVersion,
   publicStatus,
@@ -46,6 +57,15 @@ import {
   type Modality,
   type Status,
 } from "../shared/domain";
+import {
+  insurers,
+  branches,
+  coverageOf,
+  insurerName,
+  hasGnpChecklist,
+  type Insurer,
+  type Branch,
+} from "../shared/coverage";
 const labels: Record<Actor["role"], string> = {
   insured: "Asegurado individual",
   employee: "Empleado",
@@ -242,7 +262,9 @@ export function App() {
     );
   const nav: [string, LucideIcon][] = [
     ["Inicio", LayoutDashboard],
-    ...(canCreate ? [["Nuevo siniestro", UploadCloud] as [string, LucideIcon]] : []),
+    ...(canCreate
+      ? [["Nuevo siniestro", UploadCloud] as [string, LucideIcon]]
+      : []),
     ["Mis siniestros", ClipboardList],
     ["Documentos", FileText],
     ...(api.demo
@@ -365,7 +387,7 @@ export function App() {
                 <span>
                   <b>Completa tu documentación</b>
                   <small>
-                    {shortId(c.id)} · {modalities[c.modality]}
+                    {shortId(c.id)} · {procedureLabel(c)}
                   </small>
                 </span>
                 <ChevronRight size={16} />
@@ -474,14 +496,14 @@ export function App() {
                   label: "En aseguradora",
                   n: claims.filter((c) =>
                     [
-                      "Ingresado en GNP",
+                      "Ingresado en aseguradora",
                       "En espera",
                       "En trámite con aseguradora",
                     ].includes(c.status),
                   ).length,
                   icon: ShieldCheck,
                   color: "purple",
-                  text: "Gestión con GNP",
+                  text: "Gestión con tu aseguradora",
                 },
                 {
                   label: "Finalizados",
@@ -561,8 +583,8 @@ export function App() {
                 <button className="secondary" onClick={() => go("Documentos")}>
                   Consultar documentos <ArrowRight size={15} />
                 </button>
-                <span className="gnp-logo">
-                  ✳ GNP <small>SEGUROS</small>
+                <span className="muted">
+                  18 aseguradoras · 7 ramos en el catálogo
                 </span>
               </aside>
             </div>
@@ -622,7 +644,7 @@ export function App() {
           <>
             <PageHeading
               title="Documentación para tu trámite"
-              text="Consulta los formatos y soportes de cada modalidad GNP."
+              text="Consulta la cobertura disponible y los requisitos documentales definidos."
             />
             <DocumentCatalog />
           </>
@@ -666,13 +688,15 @@ export function App() {
                 <Badge status="Configuración provisional" />
               </div>
               <div className="catalog-cards">
-                {Object.entries(modalities).map(([id, label]) => (
-                  <div key={id}>
-                    <ShieldCheck size={24} />
-                    <h3>{label}</h3>
-                    <span className="badge green">Habilitado</span>
-                  </div>
-                ))}
+                {Object.entries(modalities)
+                  .filter(([id]) => id !== "notice")
+                  .map(([id, label]) => (
+                    <div key={id}>
+                      <ShieldCheck size={24} />
+                      <h3>{label}</h3>
+                      <span className="badge green">Habilitado</span>
+                    </div>
+                  ))}
               </div>
               <p className="muted">
                 Checklist: {checklistVersion}. La aprobación de reglas y textos
@@ -690,7 +714,7 @@ export function App() {
       </main>
       <footer>
         <Brand />
-        <span>Portal de Siniestros · GNP</span>
+        <span>Portal de Siniestros · Paramita</span>
         <span>Tu información, en buenas manos.</span>
       </footer>
       {toast && (
@@ -741,6 +765,7 @@ function ClaimTable({
           <tr>
             <th>Folio</th>
             <th>Asegurado</th>
+            <th>Aseguradora / ramo</th>
             <th>Trámite</th>
             <th>Registro</th>
             <th>Estado</th>
@@ -756,7 +781,12 @@ function ClaimTable({
                 </button>
               </td>
               <td>{c.insured}</td>
-              <td>{modalities[c.modality]}</td>
+              <td>
+                {insurerName(c)}
+                <br />
+                <small>{branches[coverageOf(c).branch]}</small>
+              </td>
+              <td>{procedureLabel(c)}</td>
               <td className="nowrap">{date(c.createdAt)}</td>
               <td>
                 <Badge status={viewStatus(c)} />
@@ -795,12 +825,16 @@ function ClaimsPage({
   const [search, setSearch] = useState(""),
     [filter, setFilter] = useState("Todos"),
     [modality, setModality] = useState(""),
+    [insurer, setInsurer] = useState(""),
+    [branch, setBranch] = useState(""),
     [current, setCurrent] = useState(1);
   const filtered = claims.filter(
     (c) =>
       (filter === "Todos" || viewStatus(c) === filter) &&
       (!modality || c.modality === modality) &&
-      `${shortId(c.id)} ${c.insured} ${c.policy}`
+      (!insurer || coverageOf(c).insurer === insurer) &&
+      (!branch || coverageOf(c).branch === branch) &&
+      `${shortId(c.id)} ${c.insured} ${c.policy} ${insurerName(c)} ${coverageOf(c).product}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
@@ -808,11 +842,23 @@ function ClaimsPage({
     const escape = (s: string) =>
       `"${s.replace(/"/g, '""').replace(/^[=+@-]/, "'$&")}"`;
     const rows = [
-      ["Folio", "Asegurado", "Trámite", "Registro", "Estado"],
+      [
+        "Folio",
+        "Asegurado",
+        "Aseguradora",
+        "Ramo",
+        "Producto",
+        "Trámite",
+        "Registro",
+        "Estado",
+      ],
       ...filtered.map((c) => [
         shortId(c.id),
         c.insured,
-        modalities[c.modality],
+        insurerName(c),
+        branches[coverageOf(c).branch],
+        coverageOf(c).product,
+        procedureLabel(c),
         date(c.createdAt),
         viewStatus(c),
       ]),
@@ -896,7 +942,36 @@ function ClaimsPage({
               </option>
             ))}
           </select>
-          <span className="insurer-tag">✳ GNP Seguros</span>
+          <select
+            aria-label="Filtrar aseguradora"
+            value={insurer}
+            onChange={(e) => {
+              setInsurer(e.target.value);
+              setCurrent(1);
+            }}
+          >
+            <option value="">Todas las aseguradoras</option>
+            {insurers.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Filtrar ramo"
+            value={branch}
+            onChange={(e) => {
+              setBranch(e.target.value);
+              setCurrent(1);
+            }}
+          >
+            <option value="">Todos los ramos</option>
+            {Object.entries(branches).map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
         </div>
         <ClaimTable
           claims={filtered.slice((current - 1) * 8, current * 8)}
@@ -930,6 +1005,94 @@ function ClaimsPage({
   );
 }
 function DocumentCatalog() {
+  const [insurer, setInsurer] = useState<Insurer>("gnp");
+  const [branch, setBranch] = useState<Branch>("gmm");
+  return (
+    <>
+      <section className="panel coverage-catalog">
+        <h2>Aseguradoras y ramos</h2>
+        <p>
+          Catálogo de 18 aseguradoras y 7 ramos. La disponibilidad en esta
+          matriz no acredita cobertura de una póliza ni aprobación para
+          automatizar.
+        </p>
+        <div className="coverage-selectors">
+          <Field label="Aseguradora">
+            <select
+              value={insurer}
+              onChange={(e) => {
+                const id = e.target.value as Insurer;
+                setInsurer(id);
+                setBranch(insurers.find((i) => i.id === id)!.branches[0]);
+              }}
+            >
+              {insurers.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Ramo / cobertura">
+            <select
+              value={branch}
+              onChange={(e) => setBranch(e.target.value as Branch)}
+            >
+              {insurers
+                .find((i) => i.id === insurer)!
+                .branches.map((id) => (
+                  <option key={id} value={id}>
+                    {branches[id]}
+                  </option>
+                ))}
+            </select>
+          </Field>
+        </div>
+        <details>
+          <summary>Consultar matriz completa de cobertura</summary>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Aseguradora</th>
+                  {Object.values(branches).map((name) => (
+                    <th key={name}>{name}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {insurers.map((i) => (
+                  <tr key={i.id}>
+                    <td>{i.name}</td>
+                    {Object.keys(branches).map((id) => (
+                      <td key={id}>
+                        {i.branches.includes(id as Branch) ? "Sí" : "—"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </section>
+      {hasGnpChecklist({ insurer, branch }) ? (
+        <GnpDocumentCatalog />
+      ) : (
+        <section className="panel">
+          <h2>Requisitos pendientes de aprobación</h2>
+          <p>
+            {insurerName({ insurer })} · {branches[branch]}: los requisitos de
+            esta combinación están pendientes de definición. Puedes registrar un
+            aviso y adjuntar soportes para revisión manual; Paramita confirmará
+            los requisitos y el canal.
+          </p>
+        </section>
+      )}
+    </>
+  );
+}
+function GnpDocumentCatalog() {
   const [modality, setModality] = useState<Modality>("reimbursement");
   return (
     <section className="panel">
@@ -943,7 +1106,8 @@ function DocumentCatalog() {
           {Object.entries(modalities)
             .filter(
               ([id]) =>
-                !api.demo || mock.settings().enabled.includes(id as Modality),
+                id !== "notice" &&
+                (!api.demo || mock.settings().enabled.includes(id as Modality)),
             )
             .map(([id, n]) => (
               <option key={id} value={id}>
@@ -1008,6 +1172,11 @@ function NewClaim({
     [busy, setBusy] = useState(false),
     [idempotency] = useState(() => crypto.randomUUID());
   const [data, setData] = useState({
+    insurer: "gnp" as Insurer,
+    branch: "gmm" as Branch,
+    product: branches.gmm as string,
+    insuredRelationship: "holder" as "holder" | "dependent",
+    requestedProcedure: "",
     modality: (api.demo
       ? mock.settings().enabled[0] || "reimbursement"
       : "reimbursement") as Modality,
@@ -1021,6 +1190,22 @@ function NewClaim({
   });
   const update = (key: string, value: unknown) =>
     setData((d) => ({ ...d, [key]: value }));
+  const configured = hasGnpChecklist(data);
+  function selectCoverage(insurer: Insurer, branch: Branch) {
+    const known = hasGnpChecklist({ insurer, branch });
+    setData((d) => ({
+      ...d,
+      insurer,
+      branch,
+      product: known ? branches.gmm : "",
+      modality: known
+        ? api.demo
+          ? mock.settings().enabled[0] || "reimbursement"
+          : "reimbursement"
+        : "notice",
+      requestedProcedure: "",
+    }));
+  }
   async function next(e: FormEvent) {
     e.preventDefault();
     if (step < 3) {
@@ -1072,32 +1257,86 @@ function NewClaim({
           </p>
           {step === 0 && (
             <div className="form-fields">
-              <Field
-                label="Aseguradora *"
-                hint="Actualmente está disponible GNP Seguros."
-              >
-                <select name="insurer" required defaultValue="GNP">
-                  <option value="GNP">GNP Seguros</option>
+              <Field label="Aseguradora *">
+                <select
+                  name="insurer"
+                  required
+                  value={data.insurer}
+                  onChange={(e) => {
+                    const insurer = e.target.value as Insurer;
+                    const available = insurers.find(
+                      (i) => i.id === insurer,
+                    )!.branches;
+                    selectCoverage(
+                      insurer,
+                      available.includes(data.branch)
+                        ? data.branch
+                        : available[0],
+                    );
+                  }}
+                >
+                  {insurers.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.name}
+                    </option>
+                  ))}
                 </select>
               </Field>
               <Field
-                label="Producto *"
-                hint="Producto disponible para los trámites de GNP."
+                label="Ramo / cobertura *"
+                hint="Selecciona un ramo disponible para tu aseguradora. Paramita verificará la cobertura de tu póliza."
               >
-                <select name="product" required defaultValue="GMM">
-                  <option value="GMM">Gastos Médicos Mayores</option>
+                <select
+                  required
+                  value={data.branch}
+                  onChange={(e) =>
+                    selectCoverage(data.insurer, e.target.value as Branch)
+                  }
+                >
+                  {insurers
+                    .find((i) => i.id === data.insurer)!
+                    .branches.map((id) => (
+                      <option key={id} value={id}>
+                        {branches[id]}
+                      </option>
+                    ))}
                 </select>
               </Field>
+              <Field
+                label="Producto según tu póliza *"
+                hint="Escribe el nombre tal como aparece en tu póliza; Paramita verificará la información."
+              >
+                <input
+                  required
+                  minLength={3}
+                  maxLength={120}
+                  value={data.product}
+                  onChange={(e) => update("product", e.target.value)}
+                  placeholder="Nombre del producto contratado"
+                />
+              </Field>
+              {!configured && (
+                <div className="info-banner">
+                  <CircleAlert size={19} />
+                  <span>
+                    Puedes registrar tu aviso y adjuntar soportes para revisión
+                    manual. Los trámites, requisitos y canal de esta cobertura
+                    están pendientes de definición y aprobación por Paramita.
+                  </span>
+                </div>
+              )}
               <Field label="Tipo de trámite *">
                 <select
                   value={data.modality}
                   onChange={(e) => update("modality", e.target.value)}
                 >
                   {Object.entries(modalities)
-                    .filter(
-                      ([id]) =>
-                        !api.demo ||
-                        mock.settings().enabled.includes(id as Modality),
+                    .filter(([id]) =>
+                      configured
+                        ? id !== "notice" &&
+                          (!api.demo ||
+                            mock.settings().enabled.includes(id as Modality))
+                        : id === "notice",
                     )
                     .map(([id, n]) => (
                       <option value={id} key={id}>
@@ -1106,6 +1345,23 @@ function NewClaim({
                     ))}
                 </select>
               </Field>
+              {!configured && (
+                <Field
+                  label="Trámite solicitado *"
+                  hint="Describe lo que necesitas gestionar. Paramita confirmará el trámite aplicable."
+                >
+                  <input
+                    required
+                    minLength={3}
+                    maxLength={150}
+                    value={data.requestedProcedure}
+                    onChange={(e) =>
+                      update("requestedProcedure", e.target.value)
+                    }
+                    placeholder="Describe tu solicitud"
+                  />
+                </Field>
+              )}
               <Field label="Tipo de reclamación">
                 <select
                   value={data.subsequent ? "subsequent" : "initial"}
@@ -1136,6 +1392,17 @@ function NewClaim({
           )}
           {step === 1 && (
             <div className="form-fields">
+              <Field label="Persona asegurada *">
+                <select
+                  value={data.insuredRelationship}
+                  onChange={(e) =>
+                    update("insuredRelationship", e.target.value)
+                  }
+                >
+                  <option value="holder">Titular</option>
+                  <option value="dependent">Dependiente / beneficiario</option>
+                </select>
+              </Field>
               <Field label="Nombre completo de la persona asegurada *">
                 <input
                   required
@@ -1199,11 +1466,14 @@ function NewClaim({
               <dl className="summary-grid">
                 <div>
                   <dt>Aseguradora y producto</dt>
-                  <dd>GNP · Gastos Médicos Mayores</dd>
+                  <dd>
+                    {insurerName(data)} · {branches[data.branch]} ·{" "}
+                    {data.product}
+                  </dd>
                 </div>
                 <div>
                   <dt>Trámite</dt>
-                  <dd>{modalities[data.modality]}</dd>
+                  <dd>{procedureLabel(data)}</dd>
                 </div>
                 <div>
                   <dt>Persona asegurada</dt>
@@ -1242,7 +1512,10 @@ function NewClaim({
               </label>
               <p className="muted">
                 El registro genera un acuse de recepción; la resolución del
-                siniestro corresponde a GNP.
+                siniestro corresponde a la aseguradora.{" "}
+                {configured
+                  ? ""
+                  : "Esta solicitud requiere revisión manual y definición de sus requisitos."}
               </p>
             </>
           )}
@@ -1268,8 +1541,8 @@ function NewClaim({
           </div>
         </form>
         <aside className="panel guide-panel">
-          <span className="gnp-logo">
-            ✳ GNP<small>SEGUROS</small>
+          <span className="insurer-tag">
+            {insurerName(data)} · {branches[data.branch]}
           </span>
           <h3>Un paso más cerca de resolver tu trámite</h3>
           <p>Ten a la mano tu póliza y los soportes de tu reclamación.</p>
@@ -1285,8 +1558,9 @@ function NewClaim({
             <div>
               <b>Documentación guiada</b>
               <p>
-                Un checklist específico para{" "}
-                {modalities[data.modality].toLowerCase()}.
+                {configured
+                  ? `Checklist de referencia para ${modalities[data.modality].toLowerCase()}.`
+                  : "Adjunta soportes para que Paramita confirme los requisitos de tu solicitud."}
               </p>
             </div>
           </div>
@@ -1324,14 +1598,23 @@ function ClaimDetail({
     [next, setNext] = useState<Status>("En validación"),
     [reason, setReason] = useState(""),
     [folio, setFolio] = useState(""),
-    [channel, setChannel] = useState("Portal GNP"),
+    [channel, setChannel] = useState(""),
     [evidence, setEvidence] = useState("");
   const operator = ["analyst", "approver"].includes(actor.role);
-  const rows = documentsFor(c.modality).filter((r) =>
-    ["M", "C"].includes(r.mark),
-  );
+  const configured = hasGnpChecklist(c);
+  const submission = submissionOf(c);
+  const coverage = coverageOf(c);
+  const rows = documentsForClaim(c).filter((r) => ["M", "C"].includes(r.mark));
   const uploaded = new Set(
-    c.documents.filter((d) => d.state === "UPLOADED").map((d) => d.type),
+    c.documents
+      .filter((d) => d.state === "UPLOADED")
+      .map((d) =>
+        isReceipt(d.type)
+          ? "INSURER-RECEIPT"
+          : isResolution(d.type)
+            ? "INSURER-RESULT"
+            : d.type,
+      ),
   );
   async function perform(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -1376,19 +1659,21 @@ function ClaimDetail({
               />
             </div>
             <p>
-              Gastos Médicos Mayores <span>·</span> {modalities[c.modality]}
+              {branches[coverage.branch]} <span>·</span> {procedureLabel(c)}
             </p>
           </div>
-          <span className="gnp-logo">
-            ✳ GNP<small>SEGUROS</small>
-          </span>
+          <span className="insurer-tag">{insurerName(c)}</span>
         </div>
         <div className="timeline">
           {[
             { label: "Registro", done: true },
             {
               label: "Documentación",
-              done: uploaded.size >= rows.filter((r) => r.mark === "M").length,
+              done:
+                configured &&
+                rows
+                  .filter((r) => r.mark === "M")
+                  .every((r) => uploaded.has(r.id)),
             },
             {
               label: "Revisión Paramita",
@@ -1396,11 +1681,11 @@ function ClaimDetail({
                 "En validación",
                 "En revisión",
                 "Aprobado internamente",
-                "Ingresado en GNP",
+                "Ingresado en aseguradora",
                 "Finalizado",
               ].includes(c.status),
             },
-            { label: "Gestión GNP", done: !!c.gnp },
+            { label: "Gestión con aseguradora", done: !!submission },
             {
               label: "Resultado informado",
               done: ["Finalizado", "Resultado informado"].includes(c.status),
@@ -1420,13 +1705,25 @@ function ClaimDetail({
           ))}
         </div>
       </section>
+      {!configured && (
+        <div className="info-banner">
+          <CircleAlert size={20} />
+          <span>
+            Recepción para revisión manual. Los requisitos y el canal de{" "}
+            {insurerName(c)} / {branches[coverage.branch]} requieren definición
+            y aprobación antes de aprobar o ingresar este expediente.
+          </span>
+        </div>
+      )}
       <section className="panel detail-body">
         <div className="tabs">
           {[
             "Resumen",
             "Documentos",
             "Historial",
-            ...(operator ? ["Revisión", "Gestión GNP", "SICAS"] : []),
+            ...(operator
+              ? ["Revisión", "Gestión con aseguradora", "SICAS"]
+              : []),
           ].map((t) => (
             <button
               className={tab === t ? "active" : ""}
@@ -1444,6 +1741,26 @@ function ClaimDetail({
               <h2>Información del siniestro</h2>
               <dl className="summary-grid">
                 <div>
+                  <dt>Aseguradora</dt>
+                  <dd>{insurerName(c)}</dd>
+                </div>
+                <div>
+                  <dt>Ramo / cobertura</dt>
+                  <dd>{branches[coverage.branch]}</dd>
+                </div>
+                <div>
+                  <dt>Producto declarado</dt>
+                  <dd>{coverage.product}</dd>
+                </div>
+                <div>
+                  <dt>Relación con la póliza</dt>
+                  <dd>
+                    {coverage.insuredRelationship === "dependent"
+                      ? "Dependiente / beneficiario"
+                      : "Titular"}
+                  </dd>
+                </div>
+                <div>
                   <dt>Persona asegurada</dt>
                   <dd>{c.insured}</dd>
                 </div>
@@ -1453,7 +1770,7 @@ function ClaimDetail({
                 </div>
                 <div>
                   <dt>Trámite</dt>
-                  <dd>{modalities[c.modality]}</dd>
+                  <dd>{procedureLabel(c)}</dd>
                 </div>
                 <div>
                   <dt>Fecha de registro</dt>
@@ -1474,7 +1791,10 @@ function ClaimDetail({
                 <div className="info-banner">
                   <ShieldCheck size={20} />
                   <div>
-                    <b>Resultado informado por GNP: {c.resolution.result}</b>
+                    <b>
+                      Resultado informado por {insurerName(c)}:{" "}
+                      {c.resolution.result}
+                    </b>
                     <p>{c.resolution.detail}</p>
                     <small>{date(c.resolution.date)}</small>
                   </div>
@@ -1532,8 +1852,10 @@ function ClaimDetail({
             <div className="info-banner">
               <CircleAlert size={19} />
               <span>
-                Checklist preliminar: los requisitos condicionales no bloquean
-                la recepción. Se conserva cada versión que adjuntes.
+                {configured
+                  ? "Checklist preliminar GNP/GMM: los requisitos condicionales no bloquean la recepción."
+                  : "Los soportes son opcionales durante la recepción. Esta lista no constituye un checklist aprobado."}{" "}
+                Se conserva cada versión que adjuntes.
               </span>
             </div>
             <div className="upload-list">
@@ -1542,13 +1864,13 @@ function ClaimDetail({
                 ...(operator
                   ? [
                       {
-                        id: "GNP-RECEIPT",
-                        label: "Acuse de ingreso GNP",
+                        id: "INSURER-RECEIPT",
+                        label: "Acuse de ingreso a la aseguradora",
                         mark: "C",
                       },
                       {
-                        id: "GNP-RESULT",
-                        label: "Resolución externa GNP",
+                        id: "INSURER-RESULT",
+                        label: "Resolución externa de la aseguradora",
                         mark: "C",
                       },
                     ]
@@ -1567,11 +1889,18 @@ function ClaimDetail({
                   <div>
                     <b>{r.label}</b>
                     <small>
-                      {r.mark === "C"
-                        ? "Condicional · sólo si aplica"
-                        : "Marca base · pendiente de aprobación"}
+                      {r.id === "SUPPORT"
+                        ? "Soporte opcional · requisitos por confirmar"
+                        : r.mark === "C"
+                          ? "Condicional · sólo si aplica"
+                          : "Marca base · pendiente de aprobación"}
                       {c.documents
-                        .filter((d) => d.type === r.id)
+                        .filter(
+                          (d) =>
+                            d.type === r.id ||
+                            (r.id === "INSURER-RECEIPT" && isReceipt(d.type)) ||
+                            (r.id === "INSURER-RESULT" && isResolution(d.type)),
+                        )
                         .map((d) => (
                           <span key={d.id}>
                             <button
@@ -1613,7 +1942,11 @@ function ClaimDetail({
                       type="file"
                       disabled={busy || c.status === "Finalizado"}
                       accept={
-                        r.id === "GNP-18" ? ".pdf,.xml" : ".pdf,.png,.jpg,.jpeg"
+                        r.id === "GNP-18"
+                          ? ".pdf,.xml"
+                          : r.id === "SUPPORT"
+                            ? ".pdf,.png,.jpg,.jpeg,.xml"
+                            : ".pdf,.png,.jpg,.jpeg"
                       }
                       onChange={(e) => {
                         if (e.target.files?.[0])
@@ -1656,7 +1989,8 @@ function ClaimDetail({
             <h2>Revisión y control interno</h2>
             <p>
               Los cambios internos se registran con actor, fecha y motivo. Una
-              aprobación interna permite preparar la gestión ante GNP.
+              aprobación interna permite preparar la gestión ante la
+              aseguradora.
             </p>
             <div className="form-fields">
               <Field label="Nuevo estado">
@@ -1665,7 +1999,7 @@ function ClaimDetail({
                   onChange={(e) => setNext(e.target.value as Status)}
                 >
                   {statuses
-                    .filter((s) => s !== "Borrador")
+                    .filter((s) => s !== "Borrador" && s !== "Ingresado en GNP")
                     .map((s) => (
                       <option key={s}>{s}</option>
                     ))}
@@ -1702,18 +2036,18 @@ function ClaimDetail({
             )}
           </>
         )}
-        {tab === "Gestión GNP" && (
+        {tab === "Gestión con aseguradora" && (
           <>
-            <h2>Registro de gestión con GNP</h2>
+            <h2>Registro de gestión con {insurerName(c)}</h2>
             <p>
               Registra el canal autorizado, el folio externo y el acuse. Puedes
               adjuntar el respaldo en Documentos.
             </p>
-            {c.gnp && (
+            {submission && (
               <div className="info-banner">
                 <CheckCircle2 size={20} />
-                Folio registrado: {c.gnp.folio} · {c.gnp.channel} ·{" "}
-                {date(c.gnp.date)}
+                Folio registrado: {submission.folio} · {submission.channel} ·{" "}
+                {date(submission.date)}
               </div>
             )}
             <form
@@ -1722,18 +2056,18 @@ function ClaimDetail({
                 e.preventDefault();
                 void perform(async () => {
                   onUpdate(
-                    await api.saveGnp(c, {
+                    await api.saveSubmission(c, {
                       folio,
                       channel,
                       evidenceId: evidence,
                       date: new Date().toISOString(),
                     }),
                   );
-                  notify("Acuse GNP registrado");
+                  notify("Acuse de la aseguradora registrado");
                 });
               }}
             >
-              <Field label="Folio externo GNP *">
+              <Field label="Folio externo de la aseguradora *">
                 <input
                   required
                   minLength={3}
@@ -1759,9 +2093,7 @@ function ClaimDetail({
                 >
                   <option value="">Selecciona un acuse cargado</option>
                   {c.documents
-                    .filter(
-                      (d) => d.type === "GNP-RECEIPT" && d.state === "UPLOADED",
-                    )
+                    .filter((d) => isReceipt(d.type) && d.state === "UPLOADED")
                     .map((d) => (
                       <option key={d.id} value={d.id}>
                         {d.name} · v{d.version}
@@ -1819,6 +2151,45 @@ function Reports({ claims }: { claims: Claim[] }) {
         title="Reportes de siniestros"
         text="Indicadores de los expedientes dentro de tu ámbito de acceso."
       />
+      <section className="panel coverage-report">
+        <h2>Expedientes por aseguradora y ramo</h2>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Aseguradora</th>
+                <th>Ramo</th>
+                <th>Expedientes</th>
+                <th>Requisitos pendientes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {insurers.flatMap((i) =>
+                i.branches.map((branch) => {
+                  const cases = claims.filter(
+                    (c) =>
+                      coverageOf(c).insurer === i.id &&
+                      coverageOf(c).branch === branch,
+                  );
+                  return cases.length ? (
+                    <tr key={`${i.id}-${branch}`}>
+                      <td>{i.name}</td>
+                      <td>{branches[branch]}</td>
+                      <td>{cases.length}</td>
+                      <td>
+                        {hasGnpChecklist({ insurer: i.id, branch })
+                          ? "Matriz de referencia GNP/GMM"
+                          : "Definición por Paramita"}
+                      </td>
+                    </tr>
+                  ) : null;
+                }),
+              )}
+            </tbody>
+          </table>
+        </div>
+        {!total && <Empty text="Sin expedientes para esta distribución" />}
+      </section>
       <section className="panel">
         <div className="section-heading">
           <h2>Distribución por tipo de trámite</h2>
@@ -2232,7 +2603,7 @@ function ResolutionForm({
           }
         }}
       >
-        <Field label="Resultado informado por GNP">
+        <Field label={`Resultado informado por ${insurerName(c)}`}>
           <select value={result} onChange={(e) => setResult(e.target.value)}>
             {[
               "Respuesta favorable",
@@ -2261,7 +2632,7 @@ function ResolutionForm({
           >
             <option value="">Selecciona la resolución adjunta</option>
             {c.documents
-              .filter((d) => d.type === "GNP-RESULT" && d.state === "UPLOADED")
+              .filter((d) => isResolution(d.type) && d.state === "UPLOADED")
               .map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}

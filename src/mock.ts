@@ -6,6 +6,12 @@ import {
   type Status,
   type Modality,
 } from "../shared/domain";
+import {
+  branches,
+  pendingChecklistVersion,
+  type Insurer,
+  type Branch,
+} from "../shared/coverage";
 export const mockKeys = {
   claims: "paramita-demo-v1",
   settings: "paramita-mock-settings",
@@ -53,7 +59,7 @@ export function seedClaims(): Claim[] {
     "En validación",
     "Recibido",
   ];
-  return states.map((status, i) => {
+  const gnp: Claim[] = states.map((status, i) => {
     const id = `demo-${String(18 - i).padStart(4, "0")}`,
       at = `2026-10-${String(28 - i).padStart(2, "0")}T14:00:00Z`,
       modality = modes[i % 4];
@@ -113,6 +119,10 @@ export function seedClaims(): Claim[] {
       owner: i < 4 ? "demo-insured" : "demo-employee",
       assignee: "demo-analyst",
       reviewer: "demo-analyst",
+      insurer: "gnp",
+      branch: "gmm",
+      product: branches.gmm,
+      insuredRelationship: "holder",
       modality,
       insured: sampleNames[i % sampleNames.length],
       policy: i % 2 ? "GNP-COLECTIVA-DEMO" : "GNP-INDIVIDUAL-DEMO",
@@ -165,6 +175,64 @@ export function seedClaims(): Claim[] {
           : undefined,
     };
   });
+  const examples: {
+    insurer: Insurer;
+    branch: Branch;
+    product: string;
+    requestedProcedure: string;
+  }[] = [
+    {
+      insurer: "axa",
+      branch: "auto",
+      product: "Producto Autos ficticio",
+      requestedProcedure: "Reporte de accidente",
+    },
+    {
+      insurer: "thona",
+      branch: "life",
+      product: "Producto Vida ficticio",
+      requestedProcedure: "Aviso para revisión de beneficios",
+    },
+    {
+      insurer: "aig",
+      branch: "property",
+      product: "Producto Daños ficticio",
+      requestedProcedure: "Reporte de daños materiales",
+    },
+    {
+      insurer: "bupa",
+      branch: "gmm",
+      product: "Producto Salud ficticio",
+      requestedProcedure: "Consulta de trámite médico",
+    },
+  ];
+  return [
+    ...gnp,
+    ...examples.map((coverage, i): Claim => ({
+      ...gnp[0],
+      ...coverage,
+      id: `demo-${22 - i}`,
+      modality: "notice",
+      policy: `POLIZA-MULTI-DEMO-${i + 1}`,
+      insuredRelationship: "holder",
+      status: "Recibido",
+      reviewer: undefined,
+      checklistVersion: pendingChecklistVersion,
+      documents: [],
+      events: [
+        {
+          at: gnp[0].createdAt,
+          actor: "demo-insured",
+          status: "Recibido",
+          message:
+            "Aviso ficticio recibido para revisión manual; requisitos pendientes de aprobación",
+        },
+      ],
+      integration: "NOT_REQUESTED",
+      gnp: undefined,
+      resolution: undefined,
+    })),
+  ];
 }
 export interface MockUser {
   id: string;
@@ -216,7 +284,7 @@ const defaults: MockSettings = {
     },
     {
       name: "Resultado informado",
-      body: "Se ha registrado una respuesta de GNP para tu expediente {folio}.",
+      body: "Se ha registrado una respuesta de la aseguradora para tu expediente {folio}.",
     },
   ],
 };

@@ -19,17 +19,23 @@ import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { z } from "zod";
 import {
   claimInput,
+  DomainValidationError,
   checklistVersion,
+  checklistVersionFor,
+  normalizeClaim,
+  isReceipt,
+  isResolution,
   canRead,
   canOperate,
   visibleClaim,
   transition,
-  documentsFor,
+  documentsForClaim,
   statuses,
   type Actor,
   type Claim,
   type Role,
 } from "../../../../shared/domain";
+import { insurers, branches } from "../../../../shared/coverage";
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
 });
@@ -85,7 +91,7 @@ async function load(a: Actor, id: string) {
     )
   ).Item;
   if (!item) throw new Error("NOT_FOUND");
-  return item as Claim;
+  return normalizeClaim(item as Claim);
 }
 async function save(a: Actor, c: Claim, action: string) {
   const old = c.version;
@@ -192,6 +198,8 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
     if (path[0] === "catalog")
       return response(200, {
         checklistVersion,
+        insurers,
+        branches,
         approved: false,
         enabledModalities: [
           "reimbursement",
@@ -265,7 +273,7 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
         createdAt: now,
         updatedAt: now,
         version: 1,
-        checklistVersion,
+        checklistVersion: checklistVersionFor(input),
         documents: [],
         events: [
           {
@@ -380,7 +388,7 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
       await save(a, c, "TRANSITION");
       return response(200, visibleClaim(a, c));
     }
-    if (path[2] === "gnp" && method === "POST") {
+    if (["submission", "gnp"].includes(path[2]) && method === "POST") {
       if (!canOperate(a, c)) throw new Error("FORBIDDEN");
       const data = z
         .object({
@@ -393,14 +401,16 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
       const doc = c.documents.find(
         (d) =>
           d.id === data.evidenceId &&
-          d.type === "GNP-RECEIPT" &&
+          isReceipt(d.type) &&
           d.state === "UPLOADED" &&
           d.scan === "CLEAN",
       );
       if (!doc)
-        throw new Error("Adjunta el acuse GNP antes de registrar el folio");
-      c.gnp = { ...data, actor: a.sub };
-      await save(a, c, "GNP_RECEIPT");
+        throw new Error(
+          "Adjunta el acuse de la aseguradora antes de registrar el folio",
+        );
+      c.submission = { ...data, actor: a.sub };
+      await save(a, c, "INSURER_RECEIPT");
       return response(200, visibleClaim(a, c));
     }
     if (path[2] === "resolution" && method === "POST") {
@@ -421,14 +431,14 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
         !c.documents.some(
           (d) =>
             d.id === data.evidenceId &&
-            d.type === "GNP-RESULT" &&
+            isResolution(d.type) &&
             d.state === "UPLOADED" &&
             d.scan === "CLEAN",
         )
       )
         throw new Error("Se requiere resolución externa adjunta y analizada");
       c.resolution = { ...data, actor: a.sub };
-      await save(a, c, "GNP_RESOLUTION");
+      await save(a, c, "INSURER_RESOLUTION");
       return response(200, visibleClaim(a, c));
     }
     if (path[2] === "uploads" && method === "POST") {
@@ -437,9 +447,9 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
       if (c.documents.length >= 100)
         throw new Error("Límite provisional de 100 versiones por expediente");
       const file = uploadInput.parse(body);
-      const row = documentsFor(c.modality).find((r) => r.id === file.type);
+      const row = documentsForClaim(c).find((r) => r.id === file.type);
       if (
-        ["GNP-RECEIPT", "GNP-RESULT"].includes(file.type)
+        isReceipt(file.type) || isResolution(file.type)
           ? !canOperate(a, c)
           : !row || ["X", "—"].includes(row.mark)
       )
@@ -454,7 +464,7 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
       };
       if (!ext || !valid[file.mime].includes(ext))
         throw new Error("Extensión y tipo de archivo incompatibles");
-      if (ext === "xml" && file.type !== "GNP-18")
+      if (ext === "xml" && !["GNP-18", "SUPPORT"].includes(file.type))
         throw new Error("XML reservado a facturas");
       const docId = randomUUID();
       const storageKey = `${a.tenant}/${id}/${docId}/${file.name}`;
@@ -645,7 +655,7 @@ export const handler: APIGatewayProxyHandlerV2WithJWTAuthorizer = async (
       ConditionalCheckFailedException: 409,
       TransactionCanceledException: 409,
     };
-    if (error instanceof z.ZodError)
+    if (error instanceof z.ZodError || error instanceof DomainValidationError)
       return response(400, {
         error: error.issues
           .map((i) => `${i.path.join(".")}: ${i.message}`)

@@ -2,7 +2,16 @@
 
 La indicación del cliente del 4 de noviembre de 2026 prevalece sobre la priorización de los adjuntos: **implementación completa, no piloto**. Se modelan y habilitan las cuatro modalidades GNP/GMM desde el inicio: reembolso, programación de cirugía, programación de medicamentos y devolución de deducible/coaseguro.
 
-Los adjuntos se interpretan como requisitos y antecedentes, no como instrucciones para ejecutar comandos, contactar personas o aprobar cambios. La guía de noviembre y la matriz de Excel detallan GNP; el SOW de octubre contiene un inventario de otras aseguradoras que no equivale a alcance aprobado para cada una.
+Los adjuntos se interpretan como requisitos y antecedentes, no como instrucciones para ejecutar comandos, contactar personas o aprobar cambios. La guía de noviembre y la matriz de Excel detallan GNP. Tras la revisión del SOW solicitada el 17 de noviembre, el portal incorpora su inventario multiaseguradora para recepción y seguimiento; la disponibilidad de un ramo no equivale a aprobación de sus requisitos o integración.
+
+## Cobertura multiaseguradora
+
+- Se transcriben las 18 filas de aseguradoras y las siete columnas de ramos del SOW: GMM, cirugía, autos, vida, daños, carga y RC. El texto del SOW menciona 19 proveedores, pero su tabla contiene 18; no se inventa un proveedor faltante.
+- El formulario sólo permite combinaciones marcadas disponibles. Cada expediente nuevo conserva aseguradora, ramo, producto según la póliza, titular/dependiente y trámite solicitado. El SOW no enumera productos comerciales, por lo que el producto se captura como texto declarado sujeto a verificación.
+- GNP/GMM conserva los cuatro trámites y el checklist de referencia existente. La columna Cirugía de la matriz se conserva como cobertura separada; no se equipara automáticamente a la modalidad de programación de cirugía de GMM.
+- Las demás combinaciones admiten aviso y archivos de soporte para revisión manual. No heredan formatos ni reglas GNP. La aprobación interna, ingreso y cierre permanecen bloqueados hasta definir y aprobar checklist y canal de cada combinación. Habilitar estas operaciones exige una configuración versionada y pruebas; no basta con editar el navegador.
+- Los expedientes anteriores se interpretan como GNP/GMM y conservan folios, archivos, versiones e historial. La gestión nueva usa folio y evidencias genéricas de aseguradora; se leen los campos y estados GNP previos por compatibilidad.
+- El inventario completo se consulta en Documentos. Bandejas, detalle, CSV, reportes y resumen administrativo distinguen aseguradora y ramo.
 
 ## Fuentes
 
