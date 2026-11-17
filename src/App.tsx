@@ -18,7 +18,6 @@ import {
   FileText,
   LayoutDashboard,
   LogOut,
-  Plus,
   Search,
   Settings,
   ShieldCheck,
@@ -209,6 +208,7 @@ export function App() {
   const operator = !!actor && ["analyst", "approver"].includes(actor.role);
   const administrative =
     !!actor && ["hr", "viewer", "admin", "support"].includes(actor.role);
+  const canCreate = actor?.role === "insured" || actor?.role === "employee";
   const viewStatus = (c: Claim) =>
     operator ? c.status : publicStatus(c.status as Status) || c.status;
   const active = claims.filter(
@@ -242,6 +242,7 @@ export function App() {
     );
   const nav: [string, LucideIcon][] = [
     ["Inicio", LayoutDashboard],
+    ...(canCreate ? [["Nuevo siniestro", UploadCloud] as [string, LucideIcon]] : []),
     ["Mis siniestros", ClipboardList],
     ["Documentos", FileText],
     ...(api.demo
@@ -326,10 +327,11 @@ export function App() {
           <button
             key={n}
             className={page === n ? "active" : ""}
+            aria-current={page === n ? "page" : undefined}
             onClick={() => go(n)}
           >
             <Icon size={17} />
-            {n}
+            {n === "Nuevo siniestro" ? "Cargar siniestro" : n}
           </button>
         ))}
         <span className="secure">
@@ -423,13 +425,19 @@ export function App() {
                     ? "Organiza, revisa y da seguimiento a los expedientes asignados."
                     : "Registra y consulta tus trámites de forma fácil, clara y segura."}
                 </p>
-                {!operator && !administrative && (
-                  <button
-                    className="primary"
-                    onClick={() => go("Nuevo siniestro")}
-                  >
-                    <Plus size={18} /> Registrar nuevo siniestro
-                  </button>
+                {canCreate && (
+                  <>
+                    <button
+                      className="primary"
+                      onClick={() => go("Nuevo siniestro")}
+                    >
+                      <UploadCloud size={18} /> Cargar siniestro
+                    </button>
+                    <p className="claim-entry-hint">
+                      Registra tu solicitud, adjunta los documentos y consulta
+                      su avance en Mis siniestros.
+                    </p>
+                  </>
                 )}
               </div>
               <div className="welcome-art">
@@ -581,10 +589,10 @@ export function App() {
             onOpen={open}
             viewStatus={viewStatus}
             onNew={() => go("Nuevo siniestro")}
-            canCreate={!operator && !administrative}
+            canCreate={canCreate}
           />
         )}
-        {page === "Nuevo siniestro" && (
+        {page === "Nuevo siniestro" && canCreate && (
           <NewClaim
             onCancel={() => go("Inicio")}
             onCreate={async (c) => {
@@ -599,6 +607,7 @@ export function App() {
         )}
         {page === "Expediente" && selected && (
           <ClaimDetail
+            key={selected.id}
             c={selected}
             actor={actor}
             notify={notify}
@@ -833,8 +842,8 @@ function ClaimsPage({
             </button>
             {canCreate && (
               <button className="primary" onClick={onNew}>
-                <Plus size={17} />
-                Nuevo siniestro
+                <UploadCloud size={17} />
+                Cargar siniestro
               </button>
             )}
           </div>
@@ -1030,8 +1039,8 @@ function NewClaim({
   return (
     <>
       <PageHeading
-        title="Nuevo siniestro"
-        text="Completa la información para registrar tu solicitud."
+        title="Cargar siniestro"
+        text="Primero registra los datos de tu solicitud. Después podrás adjuntar los documentos en tu expediente."
       />
       <div className="steps">
         {[
@@ -1300,7 +1309,11 @@ function ClaimDetail({
   onUpdate: (c: Claim) => void;
   notify: (s: string) => void;
 }) {
-  const [tab, setTab] = useState("Resumen"),
+  const [tab, setTab] = useState(
+      ["insured", "employee"].includes(actor.role) && c.documents.length === 0
+        ? "Documentos"
+        : "Resumen",
+    ),
     [busy, setBusy] = useState(false),
     [next, setNext] = useState<Status>("En validación"),
     [reason, setReason] = useState(""),

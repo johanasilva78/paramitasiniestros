@@ -286,6 +286,11 @@ small {
   margin-bottom: 22px;
   color: #6f7f88;
 }
+.welcome .claim-entry-hint {
+  margin: 12px 0 0;
+  max-width: 390px;
+  font-size: 12px;
+}
 .primary,
 .secondary {
   display: inline-flex;
