@@ -2,6 +2,7 @@ import { MockWorkspace } from "./MockWorkspace";
 import * as mock from "./mock";
 import {
   useEffect,
+  useEffectEvent,
   useId,
   useState,
   type FormEvent,
@@ -1629,7 +1630,39 @@ function ClaimDetail({
     [reason, setReason] = useState(""),
     [folio, setFolio] = useState(""),
     [channel, setChannel] = useState(""),
-    [evidence, setEvidence] = useState("");
+    [evidence, setEvidence] = useState(""),
+    [expiredClassification, setExpiredClassification] = useState("");
+  const pendingClassification = api.demo
+    ? ""
+    : c.documents
+        .filter((d) => d.state === "UPLOADED" && d.storageVersion && !d.classification)
+        .map((d) => d.id)
+        .join(",");
+  const applyClassificationUpdate = useEffectEvent((updated: Claim) => {
+    if (updated.version > c.version) onUpdate(updated);
+  });
+  useEffect(() => {
+    if (!pendingClassification) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const deadline = Date.now() + 90_000;
+    async function poll() {
+      try {
+        const updated = await api.getClaim(c.id);
+        if (active) applyClassificationUpdate(updated);
+      } catch {
+        // A transient read failure can be retried within this polling window.
+      }
+      if (!active) return;
+      if (Date.now() < deadline) timer = setTimeout(poll, 5_000);
+      else setExpiredClassification(pendingClassification);
+    }
+    timer = setTimeout(poll, 5_000);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [c.id, pendingClassification]);
   const operator = ["analyst", "approver"].includes(actor.role);
   const configured = hasGnpChecklist(c);
   const submission = submissionOf(c);
@@ -1662,7 +1695,7 @@ function ClaimDetail({
       notify(
         api.demo
           ? "Archivo guardado sólo en este navegador. Análisis de seguridad simulado."
-          : "Archivo recibido y pendiente de análisis de seguridad",
+          : "Archivo recibido. Estamos comprobando su categoría con IA.",
       );
     });
   }
@@ -1959,6 +1992,13 @@ function ClaimDetail({
                                     ` · Tipo detectado: ${d.classification.detectedCategory}`}
                                 </span>
                               )}
+                            {!api.demo && d.state === "UPLOADED" && d.storageVersion && !d.classification && (
+                              <span className="document-review-state" role="status">
+                                {expiredClassification === pendingClassification
+                                  ? "IA · Resultado pendiente"
+                                  : "IA · Procesando documento…"}
+                              </span>
+                            )}
                             {d.reviewStatus && (
                               <span className="document-review-state">
                                 {d.reviewStatus === "ACCEPTED"
