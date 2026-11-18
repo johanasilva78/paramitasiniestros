@@ -154,6 +154,13 @@ export interface Attachment {
   sha256: string;
   storageVersion?: string;
   scannedVersion?: string;
+  classification?: {
+    status: "MATCH" | "MISMATCH" | "REVIEW";
+    reason: string;
+    detectedCategory?: string;
+    storageVersion: string;
+    expectedType: string;
+  };
   scan: "PENDING" | "CLEAN" | "INFECTED";
 }
 export interface Claim extends Coverage {

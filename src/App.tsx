@@ -1945,6 +1945,20 @@ function ClaimDetail({
                               {d.scan === "CLEAN" ? "Analizado" : "Cuarentena"}
                               <ArrowDownToLine size={12} />
                             </button>
+                            {d.classification &&
+                              d.classification.storageVersion === d.storageVersion &&
+                              d.classification.expectedType === d.type && (
+                                <span className="document-review-state">
+                                  IA · {d.classification.status === "MATCH"
+                                    ? "Coincide"
+                                    : d.classification.status === "MISMATCH"
+                                      ? "No coincide"
+                                      : "Requiere revisión"}
+                                  {" · "}{d.classification.reason}
+                                  {d.classification.detectedCategory &&
+                                    ` · Tipo detectado: ${d.classification.detectedCategory}`}
+                                </span>
+                              )}
                             {d.reviewStatus && (
                               <span className="document-review-state">
                                 {d.reviewStatus === "ACCEPTED"
