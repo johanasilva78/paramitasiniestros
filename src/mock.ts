@@ -2,6 +2,7 @@ import {
   checklistVersion,
   documentsFor,
   type Claim,
+  type Enrollment,
   type Role,
   type Status,
   type Modality,
@@ -38,6 +39,45 @@ export const sampleNames = [
   "Sofía Ramírez León",
   "Jorge Ruiz Mora",
 ];
+const individualEnrollment: Enrollment = {
+  enrollmentId: "gnp-individual-titular",
+  enrollmentVersion: 1,
+  insurer: "gnp",
+  branch: "gmm",
+  product: branches.gmm,
+  policy: "GNP-INDIVIDUAL-DEMO",
+  insured: sampleNames[0],
+  insuredRelationship: "holder",
+};
+export function enrollments(sub: string): Enrollment[] {
+  if (sub === "demo-employee")
+    return [
+      {
+        ...individualEnrollment,
+        enrollmentId: "gnp-colectiva-empleado",
+        policy: "GNP-COLECTIVA-DEMO",
+        insured: sampleNames[1],
+      },
+    ];
+  if (sub !== "demo-insured") return [];
+  return [
+    individualEnrollment,
+    {
+      ...individualEnrollment,
+      enrollmentId: "gnp-individual-dependiente",
+      insured: sampleNames[2],
+      insuredRelationship: "dependent",
+    },
+    {
+      ...individualEnrollment,
+      enrollmentId: "axa-autos-titular",
+      insurer: "axa",
+      branch: "auto",
+      product: "Producto Autos ficticio",
+      policy: "POLIZA-MULTI-DEMO-1",
+    },
+  ];
+}
 export function seedClaims(): Claim[] {
   const modes: Modality[] = [
     "reimbursement",

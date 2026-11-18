@@ -54,6 +54,7 @@ import {
   statuses,
   type Claim,
   type Actor,
+  type Enrollment,
   type Modality,
   type Status,
 } from "../shared/domain";
@@ -267,12 +268,10 @@ export function App() {
       : []),
     ["Mis siniestros", ClipboardList],
     ["Documentos", FileText],
-    ...(api.demo
-      ? [
-          ["Mis pólizas", ShieldCheck] as [string, LucideIcon],
-          ["Notificaciones", Bell] as [string, LucideIcon],
-        ]
+    ...(canCreate
+      ? [["Mis pólizas", ShieldCheck] as [string, LucideIcon]]
       : []),
+    ...(api.demo ? [["Notificaciones", Bell] as [string, LucideIcon]] : []),
   ];
   if (operator)
     nav.push(["Reportes", ChartNoAxesCombined], ["Integraciones", Activity]);
@@ -401,7 +400,6 @@ export function App() {
       <main>
         {api.demo &&
           ([
-            "Mis pólizas",
             "Notificaciones",
             "Empresa",
             "Monitoreo",
@@ -570,10 +568,7 @@ export function App() {
                   <br />
                   en tu trámite
                 </h2>
-                <p>
-                  Ten a la mano tu número de póliza y los documentos de tu
-                  reclamación.
-                </p>
+                <p>Ten a la mano los documentos de tu reclamación.</p>
                 <div className="help-divider" />
                 <h4>¿Qué documentos necesito?</h4>
                 <p>
@@ -614,18 +609,48 @@ export function App() {
             canCreate={canCreate}
           />
         )}
+        {page === "Mis pólizas" && canCreate && (
+          <EnrollmentPage
+            key={`policies-${actor.sub}`}
+            title="Mis pólizas"
+            text="Consulta las personas y pólizas asignadas a tu cuenta."
+          >
+            {(items) => (
+              <div className="mock-policy-grid">
+                {items.map((item) => (
+                  <section className="panel" key={item.enrollmentId}>
+                    <span className="insurer-tag">
+                      {insurerName(item)} · {branches[item.branch]}
+                    </span>
+                    <h2>{item.product}</h2>
+                    <EnrollmentSummary enrollment={item} />
+                  </section>
+                ))}
+              </div>
+            )}
+          </EnrollmentPage>
+        )}
         {page === "Nuevo siniestro" && canCreate && (
-          <NewClaim
-            onCancel={() => go("Inicio")}
-            onCreate={async (c) => {
-              await refresh();
-              await open(c);
-              notify(
-                "Tu solicitud fue registrada. Ya puedes adjuntar los documentos.",
-              );
-            }}
-            notify={notify}
-          />
+          <EnrollmentPage
+            key={`new-claim-${actor.sub}`}
+            title="Cargar siniestro"
+            text="Registra tu solicitud y adjunta los documentos en el expediente."
+          >
+            {(items) => (
+              <NewClaim
+                enrollments={items}
+                onCancel={() => go("Inicio")}
+                onCreate={async (c) => {
+                  await refresh();
+                  await open(c);
+                  notify(
+                    "Tu solicitud fue registrada. Ya puedes adjuntar los documentos.",
+                  );
+                }}
+                notify={notify}
+              />
+            )}
+          </EnrollmentPage>
         )}
         {page === "Expediente" && selected && (
           <ClaimDetail
@@ -1159,11 +1184,94 @@ function GnpDocumentCatalog() {
     </section>
   );
 }
+function EnrollmentPage({
+  title,
+  text,
+  children,
+}: {
+  title: string;
+  text: string;
+  children: (items: Enrollment[]) => ReactNode;
+}) {
+  const [items, setItems] = useState<Enrollment[] | null>(null);
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    api.listEnrollments().then(
+      (result) => {
+        if (active) setItems(result);
+      },
+      () => {
+        if (active) setError("No pudimos consultar las pólizas de tu cuenta.");
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [attempt]);
+  return (
+    <>
+      <PageHeading title={title} text={text} />
+      {items?.length ? (
+        children(items)
+      ) : (
+        <section className="panel">
+          {error ? (
+            <>
+              <p role="alert">{error}</p>
+              <button
+                className="secondary"
+                onClick={() => {
+                  setError("");
+                  setAttempt((count) => count + 1);
+                }}
+              >
+                Reintentar
+              </button>
+            </>
+          ) : items ? (
+            <p>
+              Tu cuenta aún no tiene personas y pólizas asignadas. Contacta a
+              Paramita para actualizar tus datos.
+            </p>
+          ) : (
+            <p role="status">Consultando las pólizas de tu cuenta…</p>
+          )}
+        </section>
+      )}
+    </>
+  );
+}
+function EnrollmentSummary({ enrollment }: { enrollment: Enrollment }) {
+  return (
+    <dl className="summary-grid">
+      <div>
+        <dt>Persona asegurada</dt>
+        <dd>{enrollment.insured}</dd>
+      </div>
+      <div>
+        <dt>Relación con la póliza</dt>
+        <dd>
+          {enrollment.insuredRelationship === "holder"
+            ? "Titular"
+            : "Dependiente / beneficiario"}
+        </dd>
+      </div>
+      <div>
+        <dt>Póliza</dt>
+        <dd>{enrollment.policy}</dd>
+      </div>
+    </dl>
+  );
+}
 function NewClaim({
+  enrollments,
   onCancel,
   onCreate,
   notify,
 }: {
+  enrollments: Enrollment[];
   onCancel: () => void;
   onCreate: (c: Claim) => Promise<void>;
   notify: (s: string) => void;
@@ -1171,69 +1279,72 @@ function NewClaim({
   const [step, setStep] = useState(0),
     [busy, setBusy] = useState(false),
     [idempotency] = useState(() => crypto.randomUUID());
+  const [enrollmentId, setEnrollmentId] = useState(
+    enrollments.length === 1 ? enrollments[0].enrollmentId : "",
+  );
+  const enrollment = enrollments.find(
+    (item) => item.enrollmentId === enrollmentId,
+  );
+  const configured = !!enrollment && hasGnpChecklist(enrollment);
+  const enabledModalities = api.demo ? mock.settings().enabled : undefined;
   const [data, setData] = useState({
-    insurer: "gnp" as Insurer,
-    branch: "gmm" as Branch,
-    product: branches.gmm as string,
-    insuredRelationship: "holder" as "holder" | "dependent",
     requestedProcedure: "",
-    modality: (api.demo
-      ? mock.settings().enabled[0] || "reimbursement"
-      : "reimbursement") as Modality,
-    insured: "",
-    policy: "",
+    modality: (enabledModalities?.[0] || "reimbursement") as Modality,
     eventDate: "",
     description: "",
     subsequent: false,
     previousReference: "",
     consent: false,
   });
-  const update = (key: string, value: unknown) =>
-    setData((d) => ({ ...d, [key]: value }));
-  const configured = hasGnpChecklist(data);
-  function selectCoverage(insurer: Insurer, branch: Branch) {
-    const known = hasGnpChecklist({ insurer, branch });
-    setData((d) => ({
-      ...d,
-      insurer,
-      branch,
-      product: known ? branches.gmm : "",
-      modality: known
-        ? api.demo
-          ? mock.settings().enabled[0] || "reimbursement"
-          : "reimbursement"
-        : "notice",
+  const modality = configured ? data.modality : "notice";
+  const update = <K extends keyof typeof data>(
+    key: K,
+    value: (typeof data)[K],
+  ) => setData((current) => ({ ...current, [key]: value }));
+  function selectEnrollment(id: string) {
+    setEnrollmentId(id);
+    setData((current) => ({
+      ...current,
+      modality: enabledModalities?.[0] || "reimbursement",
       requestedProcedure: "",
+      consent: false,
     }));
   }
   async function next(e: FormEvent) {
     e.preventDefault();
-    if (step < 3) {
+    if (!enrollment || busy) return;
+    if (step < 2) {
       setStep(step + 1);
       return;
     }
     setBusy(true);
     try {
-      await onCreate(await api.createClaim(data, idempotency));
+      await onCreate(
+        await api.createClaim(
+          {
+            ...data,
+            modality,
+            enrollmentId,
+            enrollmentVersion: enrollment.enrollmentVersion,
+          },
+          idempotency,
+        ),
+      );
     } catch (e) {
       notify((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
+  const steps = [
+    "Póliza y trámite",
+    "Detalle del siniestro",
+    "Revisión y envío",
+  ];
   return (
     <>
-      <PageHeading
-        title="Cargar siniestro"
-        text="Primero registra los datos de tu solicitud. Después podrás adjuntar los documentos en tu expediente."
-      />
       <div className="steps">
-        {[
-          "Información general",
-          "Persona asegurada",
-          "Detalle del siniestro",
-          "Revisión y envío",
-        ].map((s, i) => (
+        {steps.map((s, i) => (
           <div className={i <= step ? "done" : ""} key={s}>
             <span>{i < step ? <Check size={16} /> : i + 1}</span>
             <b>{s}</b>
@@ -1242,194 +1353,116 @@ function NewClaim({
       </div>
       <div className="form-layout">
         <form className="panel form-panel" onSubmit={next}>
-          <h2>
-            {
-              [
-                "Información general",
-                "Datos de la persona asegurada",
-                "Detalle del siniestro",
-                "Revisa tu solicitud",
-              ][step]
-            }
-          </h2>
-          <p className="muted">
-            Los campos marcados con * son necesarios para continuar.
-          </p>
+          <h2>{steps[step]}</h2>
           {step === 0 && (
             <div className="form-fields">
-              <Field label="Aseguradora *">
-                <select
-                  name="insurer"
-                  required
-                  value={data.insurer}
-                  onChange={(e) => {
-                    const insurer = e.target.value as Insurer;
-                    const available = insurers.find(
-                      (i) => i.id === insurer,
-                    )!.branches;
-                    selectCoverage(
-                      insurer,
-                      available.includes(data.branch)
-                        ? data.branch
-                        : available[0],
-                    );
-                  }}
-                >
-                  {insurers.map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name}
+              {enrollments.length > 1 && (
+                <Field label="Persona asegurada y póliza *">
+                  <select
+                    required
+                    value={enrollmentId}
+                    onChange={(e) => selectEnrollment(e.target.value)}
+                  >
+                    <option value="" disabled>
+                      Selecciona una opción
                     </option>
-                  ))}
-                </select>
-              </Field>
-              <Field
-                label="Ramo / cobertura *"
-                hint="Selecciona un ramo disponible para tu aseguradora. Paramita verificará la cobertura de tu póliza."
-              >
-                <select
-                  required
-                  value={data.branch}
-                  onChange={(e) =>
-                    selectCoverage(data.insurer, e.target.value as Branch)
-                  }
-                >
-                  {insurers
-                    .find((i) => i.id === data.insurer)!
-                    .branches.map((id) => (
-                      <option key={id} value={id}>
-                        {branches[id]}
+                    {enrollments.map((item) => (
+                      <option key={item.enrollmentId} value={item.enrollmentId}>
+                        {item.insured} · {insurerName(item)} · {item.policy} ·{" "}
+                        {branches[item.branch]} · {item.product}
                       </option>
                     ))}
-                </select>
-              </Field>
-              <Field
-                label="Producto según tu póliza *"
-                hint="Escribe el nombre tal como aparece en tu póliza; Paramita verificará la información."
-              >
-                <input
-                  required
-                  minLength={3}
-                  maxLength={120}
-                  value={data.product}
-                  onChange={(e) => update("product", e.target.value)}
-                  placeholder="Nombre del producto contratado"
-                />
-              </Field>
-              {!configured && (
-                <div className="info-banner">
-                  <CircleAlert size={19} />
-                  <span>
-                    Puedes registrar tu aviso y adjuntar soportes para revisión
-                    manual. Los trámites, requisitos y canal de esta cobertura
-                    están pendientes de definición y aprobación por Paramita.
-                  </span>
-                </div>
-              )}
-              <Field label="Tipo de trámite *">
-                <select
-                  value={data.modality}
-                  onChange={(e) => update("modality", e.target.value)}
-                >
-                  {Object.entries(modalities)
-                    .filter(([id]) =>
-                      configured
-                        ? id !== "notice" &&
-                          (!api.demo ||
-                            mock.settings().enabled.includes(id as Modality))
-                        : id === "notice",
-                    )
-                    .map(([id, n]) => (
-                      <option value={id} key={id}>
-                        {n}
-                      </option>
-                    ))}
-                </select>
-              </Field>
-              {!configured && (
-                <Field
-                  label="Trámite solicitado *"
-                  hint="Describe lo que necesitas gestionar. Paramita confirmará el trámite aplicable."
-                >
-                  <input
-                    required
-                    minLength={3}
-                    maxLength={150}
-                    value={data.requestedProcedure}
-                    onChange={(e) =>
-                      update("requestedProcedure", e.target.value)
-                    }
-                    placeholder="Describe tu solicitud"
-                  />
+                  </select>
                 </Field>
               )}
-              <Field label="Tipo de reclamación">
-                <select
-                  value={data.subsequent ? "subsequent" : "initial"}
-                  onChange={(e) =>
-                    update("subsequent", e.target.value === "subsequent")
-                  }
-                >
-                  <option value="initial">Inicial</option>
-                  <option value="subsequent">Subsecuente</option>
-                </select>
-              </Field>
-              {data.subsequent && (
-                <Field
-                  label="Referencia del caso anterior *"
-                  hint="La asociación se verificará por Paramita; no se fusionarán expedientes automáticamente."
-                >
-                  <input
-                    required
-                    maxLength={100}
-                    value={data.previousReference}
-                    onChange={(e) =>
-                      update("previousReference", e.target.value)
-                    }
-                  />
-                </Field>
+              {enrollment && (
+                <>
+                  <p>
+                    {insurerName(enrollment)} · {branches[enrollment.branch]} ·{" "}
+                    {enrollment.product}
+                  </p>
+                  <EnrollmentSummary enrollment={enrollment} />
+                  {!configured && (
+                    <div className="info-banner">
+                      <CircleAlert size={19} />
+                      <span>
+                        Puedes registrar tu aviso y adjuntar soportes para
+                        revisión manual. Los trámites, requisitos y canal de
+                        esta cobertura están pendientes de definición y
+                        aprobación por Paramita.
+                      </span>
+                    </div>
+                  )}
+                  <Field label="Tipo de trámite *">
+                    <select
+                      value={modality}
+                      onChange={(e) =>
+                        update("modality", e.target.value as Modality)
+                      }
+                    >
+                      {Object.entries(modalities)
+                        .filter(([id]) =>
+                          configured
+                            ? id !== "notice" &&
+                              (!enabledModalities ||
+                                enabledModalities.includes(id as Modality))
+                            : id === "notice",
+                        )
+                        .map(([id, n]) => (
+                          <option value={id} key={id}>
+                            {n}
+                          </option>
+                        ))}
+                    </select>
+                  </Field>
+                  {!configured && (
+                    <Field
+                      label="Trámite solicitado *"
+                      hint="Describe lo que necesitas gestionar. Paramita confirmará el trámite aplicable."
+                    >
+                      <input
+                        required
+                        minLength={3}
+                        maxLength={150}
+                        value={data.requestedProcedure}
+                        onChange={(e) =>
+                          update("requestedProcedure", e.target.value)
+                        }
+                        placeholder="Describe tu solicitud"
+                      />
+                    </Field>
+                  )}
+                  <Field label="Tipo de reclamación">
+                    <select
+                      value={data.subsequent ? "subsequent" : "initial"}
+                      onChange={(e) =>
+                        update("subsequent", e.target.value === "subsequent")
+                      }
+                    >
+                      <option value="initial">Inicial</option>
+                      <option value="subsequent">Subsecuente</option>
+                    </select>
+                  </Field>
+                  {data.subsequent && (
+                    <Field
+                      label="Referencia del caso anterior *"
+                      hint="La asociación se verificará por Paramita; no se fusionarán expedientes automáticamente."
+                    >
+                      <input
+                        required
+                        maxLength={100}
+                        value={data.previousReference}
+                        onChange={(e) =>
+                          update("previousReference", e.target.value)
+                        }
+                      />
+                    </Field>
+                  )}
+                </>
               )}
             </div>
           )}
           {step === 1 && (
-            <div className="form-fields">
-              <Field label="Persona asegurada *">
-                <select
-                  value={data.insuredRelationship}
-                  onChange={(e) =>
-                    update("insuredRelationship", e.target.value)
-                  }
-                >
-                  <option value="holder">Titular</option>
-                  <option value="dependent">Dependiente / beneficiario</option>
-                </select>
-              </Field>
-              <Field label="Nombre completo de la persona asegurada *">
-                <input
-                  required
-                  minLength={3}
-                  maxLength={150}
-                  autoComplete="name"
-                  value={data.insured}
-                  onChange={(e) => update("insured", e.target.value)}
-                  placeholder="Nombre(s) y apellidos"
-                />
-              </Field>
-              <Field
-                label="Número de póliza *"
-                hint="Paramita verificará la información de tu póliza."
-              >
-                <input
-                  required
-                  minLength={3}
-                  maxLength={80}
-                  value={data.policy}
-                  onChange={(e) => update("policy", e.target.value)}
-                  placeholder="Ingresa el número de tu póliza"
-                />
-              </Field>
-            </div>
-          )}
-          {step === 2 && (
             <div className="form-fields">
               <Field label="Fecha del evento *">
                 <input
@@ -1461,27 +1494,27 @@ function NewClaim({
               </div>
             </div>
           )}
-          {step === 3 && (
+          {step === 2 && enrollment && (
             <>
               <dl className="summary-grid">
                 <div>
                   <dt>Aseguradora y producto</dt>
                   <dd>
-                    {insurerName(data)} · {branches[data.branch]} ·{" "}
-                    {data.product}
+                    {insurerName(enrollment)} · {branches[enrollment.branch]} ·{" "}
+                    {enrollment.product}
                   </dd>
                 </div>
                 <div>
                   <dt>Trámite</dt>
-                  <dd>{procedureLabel(data)}</dd>
+                  <dd>{procedureLabel({ ...data, modality })}</dd>
                 </div>
                 <div>
                   <dt>Persona asegurada</dt>
-                  <dd>{data.insured}</dd>
+                  <dd>{enrollment.insured}</dd>
                 </div>
                 <div>
                   <dt>Póliza</dt>
-                  <dd>{data.policy}</dd>
+                  <dd>{enrollment.policy}</dd>
                 </div>
                 <div>
                   <dt>Fecha del evento</dt>
@@ -1528,10 +1561,10 @@ function NewClaim({
               <ArrowLeft size={16} />
               {step ? "Regresar" : "Cancelar"}
             </button>
-            <button className="primary" disabled={busy}>
+            <button className="primary" disabled={busy || !enrollment}>
               {busy ? (
                 <LoaderCircle className="spin" size={17} />
-              ) : step === 3 ? (
+              ) : step === 2 ? (
                 "Registrar solicitud"
               ) : (
                 "Continuar"
@@ -1541,11 +1574,8 @@ function NewClaim({
           </div>
         </form>
         <aside className="panel guide-panel">
-          <span className="insurer-tag">
-            {insurerName(data)} · {branches[data.branch]}
-          </span>
           <h3>Un paso más cerca de resolver tu trámite</h3>
-          <p>Ten a la mano tu póliza y los soportes de tu reclamación.</p>
+          <p>Ten a la mano los soportes de tu reclamación.</p>
           <div className="guide-item">
             <ShieldCheck size={22} />
             <div>
@@ -1559,8 +1589,8 @@ function NewClaim({
               <b>Documentación guiada</b>
               <p>
                 {configured
-                  ? `Checklist de referencia para ${modalities[data.modality].toLowerCase()}.`
-                  : "Adjunta soportes para que Paramita confirme los requisitos de tu solicitud."}
+                  ? `Checklist de referencia para ${modalities[modality].toLowerCase()}.`
+                  : "Adjunta los soportes de tu solicitud en el expediente."}
               </p>
             </div>
           </div>

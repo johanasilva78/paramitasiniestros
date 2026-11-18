@@ -11,6 +11,7 @@ import {
 } from "aws-amplify/auth";
 import {
   claimInput,
+  enrolledClaimInput,
   checklistVersionFor,
   normalizeClaim,
   isReceipt,
@@ -18,6 +19,7 @@ import {
   transition,
   type Claim,
   type Actor,
+  type Enrollment,
   type Modality,
 } from "../shared/domain";
 export const demo = import.meta.env.VITE_DEMO_MODE !== "false";
@@ -72,6 +74,10 @@ export async function request<T>(
 export async function me() {
   if (demo) return actor;
   return request<Actor>("/me");
+}
+export async function listEnrollments() {
+  if (demo) return mock.enrollments(actor.sub);
+  return (await request<{ items: Enrollment[] }>("/me/enrollments")).items;
 }
 export function setDemoRole(role: Actor["role"]) {
   actor = {
@@ -155,22 +161,37 @@ export async function getClaim(id: string) {
   return normalizeClaim(await request<Claim>(`/claims/${id}`));
 }
 export async function createClaim(data: unknown, key: string) {
-  const input = claimInput.parse(data);
+  const payload = enrolledClaimInput.parse(data);
+  if (!demo) return request<Claim>("/claims", "POST", payload, key);
+  if (!["insured", "employee"].includes(actor.role))
+    throw new Error("Acceso denegado");
+  const enrollment = mock
+    .enrollments(actor.sub)
+    .find(
+      (item) =>
+        item.enrollmentId === payload.enrollmentId &&
+        item.enrollmentVersion === payload.enrollmentVersion,
+    );
+  if (!enrollment)
+    throw new Error(
+      "La póliza y persona seleccionadas ya no están disponibles en tu cuenta.",
+    );
+  const input = claimInput.parse({ ...payload, ...enrollment });
   if (
-    demo &&
     input.modality !== "notice" &&
     !mock.settings().enabled.includes(input.modality)
   )
     throw new Error(
       "Modalidad deshabilitada en la configuración de demostración",
     );
-  if (!demo) return request<Claim>("/claims", "POST", input, key);
   const all = read();
-  const existing = all.find((c) => c.id === key);
+  const existing = all.find((c) => c.id === key && c.owner === actor.sub);
   if (existing) return existing;
   const date = new Date().toISOString();
   const c: Claim = {
     ...input,
+    enrollmentId: enrollment.enrollmentId,
+    enrollmentVersion: enrollment.enrollmentVersion,
     id: key,
     tenant: demoActor.tenant,
     owner: actor.sub,

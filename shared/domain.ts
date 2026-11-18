@@ -157,6 +157,8 @@ export interface Attachment {
   scan: "PENDING" | "CLEAN" | "INFECTED";
 }
 export interface Claim extends Coverage {
+  enrollmentId?: string;
+  enrollmentVersion?: number;
   id: string;
   tenant: string;
   owner: string;
@@ -195,45 +197,70 @@ export interface Claim extends Coverage {
   };
   internalNotes?: string;
 }
-export const claimInput = z
-  .object({
-    insurer: z.enum(insurerIds),
-    branch: z.enum([
-      "gmm",
-      "surgery",
-      "auto",
-      "life",
-      "property",
-      "cargo",
-      "liability",
-    ]),
-    product: z.string().trim().min(3).max(120),
-    insuredRelationship: z.enum(["holder", "dependent"]),
-    requestedProcedure: z.string().trim().max(150).optional(),
-    modality: z.enum([
-      "reimbursement",
-      "surgery",
-      "medication",
-      "deductible",
-      "notice",
-    ]),
-    insured: z.string().trim().min(3).max(150),
-    policy: z.string().trim().min(3).max(80),
-    eventDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .refine(
-        (x) =>
-          !isNaN(Date.parse(x)) &&
-          new Date(x).toISOString().slice(0, 10) === x &&
-          x <= new Date().toISOString().slice(0, 10),
-        "Fecha inválida o futura",
-      ),
-    description: z.string().trim().min(10).max(2000),
-    subsequent: z.boolean(),
-    previousReference: z.string().max(100).optional(),
-    consent: z.literal(true),
-  })
+const claimFields = z.object({
+  insurer: z.enum(insurerIds),
+  branch: z.enum([
+    "gmm",
+    "surgery",
+    "auto",
+    "life",
+    "property",
+    "cargo",
+    "liability",
+  ]),
+  product: z.string().trim().min(3).max(120),
+  insuredRelationship: z.enum(["holder", "dependent"]),
+  requestedProcedure: z.string().trim().max(150).optional(),
+  modality: z.enum([
+    "reimbursement",
+    "surgery",
+    "medication",
+    "deductible",
+    "notice",
+  ]),
+  insured: z.string().trim().min(3).max(150),
+  policy: z.string().trim().min(3).max(80),
+  eventDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine(
+      (x) =>
+        !isNaN(Date.parse(x)) &&
+        new Date(x).toISOString().slice(0, 10) === x &&
+        x <= new Date().toISOString().slice(0, 10),
+      "Fecha inválida o futura",
+    ),
+  description: z.string().trim().min(10).max(2000),
+  subsequent: z.boolean(),
+  previousReference: z.string().max(100).optional(),
+  consent: z.literal(true),
+});
+const insuredFields = {
+  insured: true,
+  policy: true,
+  insurer: true,
+  branch: true,
+  product: true,
+  insuredRelationship: true,
+} as const;
+const enrollmentIdentity = {
+  enrollmentId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
+  enrollmentVersion: z.number().int().positive().safe(),
+};
+export const enrollmentSchema = claimFields
+  .pick(insuredFields)
+  .extend(enrollmentIdentity)
+  .refine(
+    (c) =>
+      insurers.some((i) => i.id === c.insurer && i.branches.includes(c.branch)),
+    "Ramo no disponible para esta aseguradora en la matriz SOW",
+  );
+export type Enrollment = z.infer<typeof enrollmentSchema>;
+export const enrolledClaimInput = claimFields
+  .omit(insuredFields)
+  .extend(enrollmentIdentity)
+  .strict();
+export const claimInput = claimFields
   .superRefine((c, ctx) => {
     if (!insurers.find((i) => i.id === c.insurer)?.branches.includes(c.branch))
       ctx.addIssue({

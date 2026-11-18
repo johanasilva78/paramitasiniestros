@@ -8,7 +8,6 @@ import {
   Activity,
   FileText,
   Mail,
-  Eye,
   X,
   Save,
 } from "lucide-react";
@@ -36,7 +35,6 @@ export function MockWorkspace({
   const [revision, setRevision] = useState(0),
     [tab, setTab] = useState("Usuarios"),
     [config, setConfig] = useState(() => mock.settings()),
-    [policy, setPolicy] = useState(""),
     [confirmReset, setConfirmReset] = useState(false);
   const [user, setUser] = useState({
       name: "",
@@ -110,68 +108,6 @@ export function MockWorkspace({
         </div>
         <span className="badge amber">SIMULADO · SIN CONEXIONES EXTERNAS</span>
       </div>
-      {view === "Mis pólizas" && (
-        <>
-          <div className="mock-policy-grid">
-            {[
-              {
-                id: "GNP-INDIVIDUAL-DEMO",
-                name: "Protección individual",
-                kind: "Individual",
-                people: "Titular y dependiente",
-                until: "28 oct 2027",
-              },
-              {
-                id: "GNP-COLECTIVA-DEMO",
-                name: "Bienestar empresarial",
-                kind: "Colectiva",
-                people: "Persona empleada",
-                until: "31 dic 2027",
-              },
-            ].map((p) => (
-              <section className="panel" key={p.id}>
-                <div className="section-heading">
-                  <span className="stat-icon blue">
-                    <ShieldCheck size={25} />
-                  </span>
-                  <span className="badge green">Vigencia ficticia</span>
-                </div>
-                <span className="gnp-logo">✳ GNP</span>
-                <h2>{p.name}</h2>
-                <p>Gastos Médicos Mayores · {p.kind}</p>
-                <dl className="summary-grid">
-                  <div>
-                    <dt>Póliza</dt>
-                    <dd>{p.id}</dd>
-                  </div>
-                  <div>
-                    <dt>Fin de vigencia de ejemplo</dt>
-                    <dd>{p.until}</dd>
-                  </div>
-                  <div>
-                    <dt>Personas aseguradas</dt>
-                    <dd>{p.people}</dd>
-                  </div>
-                </dl>
-                <button
-                  className="secondary"
-                  onClick={() => setPolicy(policy === p.id ? "" : p.id)}
-                >
-                  <Eye size={15} />
-                  Ver detalle
-                </button>
-                {policy === p.id && (
-                  <div className="info-banner">
-                    Coberturas, deducibles, coaseguros, red hospitalaria y pagos
-                    son datos de demostración pendientes del contrato SICAS.
-                    Esta tarjeta no acredita elegibilidad ni cobertura.
-                  </div>
-                )}
-              </section>
-            ))}
-          </div>
-        </>
-      )}
       {summary && (
         <>
           <div className="stats">
