@@ -3,11 +3,14 @@ import { Amplify } from "aws-amplify";
 import {
   type SignInOutput,
   fetchAuthSession,
+  fetchMFAPreference,
+  fetchUserAttributes,
   signIn,
   confirmSignIn,
   signOut,
   resetPassword,
   confirmResetPassword,
+  updatePassword,
 } from "aws-amplify/auth";
 import {
   claimInput,
@@ -132,6 +135,22 @@ export async function resetForgottenPassword(
 }
 export async function logout() {
   if (!demo) await signOut();
+}
+export async function accountDetails() {
+  const [attributes, mfa] = await Promise.allSettled([
+    fetchUserAttributes(),
+    fetchMFAPreference(),
+  ]);
+  if (attributes.status === "rejected") throw attributes.reason;
+  return {
+    email: attributes.value.email,
+    emailVerified: attributes.value.email_verified === "true",
+    authenticatorConfigured:
+      mfa.status === "fulfilled" ? mfa.value.enabled?.includes("TOTP") ?? false : undefined,
+  };
+}
+export async function changePassword(oldPassword: string, newPassword: string) {
+  await updatePassword({ oldPassword, newPassword });
 }
 export async function listClaims() {
   if (demo) {

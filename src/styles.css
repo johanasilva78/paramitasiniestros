@@ -1246,6 +1246,37 @@ tr:last-child td {
 .notification-panel p {
   font-size: 12px;
 }
+.notification-panel {
+  max-height: min(70vh, 580px);
+  overflow: auto;
+}
+.notice-row.unread {
+  background: #edf5fd;
+}
+.account-button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+}
+.account-panel {
+  margin-bottom: 18px;
+  padding: 24px;
+}
+.account-password {
+  display: grid;
+  gap: 14px;
+  max-width: 420px;
+  margin-top: 16px;
+}
+.account-password label {
+  display: grid;
+  gap: 6px;
+}
+.account-password button {
+  justify-self: start;
+}
 .notice-row {
   display: flex;
   align-items: center;
@@ -1524,7 +1555,7 @@ footer .brand-logo {
   }
   .header-right .partner,
   .header-divider,
-  .user > div {
+  .user > :not(.avatar) {
     display: none;
   }
   .avatar {

@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   UploadCloud,
   Users,
+  UserRound,
   X,
   LoaderCircle,
   CircleHelp,
@@ -88,6 +89,51 @@ const shortId = (id: string) =>
   id.startsWith("demo-")
     ? `SIN-2026-${id.slice(-4)}`
     : `SIN-${id.slice(0, 8).toUpperCase()}`;
+
+function customerNotices(claims: Claim[]) {
+  return claims.flatMap((claim) => {
+    const notices = documentsToCorrect(claim).map((document) => ({
+      id: `${claim.id}:observed:${document.id}`,
+      title: "Te solicitaron una corrección",
+      at: claim.updatedAt,
+      claim,
+      correction: true,
+    }));
+    if (claim.resolution) {
+      notices.push({
+        id: `${claim.id}:resolution:${claim.resolution.date}`,
+        title: "Resultado de la aseguradora disponible",
+        at: claim.resolution.date,
+        claim,
+        correction: false,
+      });
+    }
+    let previous = "";
+    for (const [index, event] of claim.events.entries()) {
+      const status = publicStatus(event.status) || event.status;
+      if (status === previous) continue;
+      previous = status;
+      if (!index || status === "Resultado informado") continue;
+      notices.push({
+        id: `${claim.id}:status:${event.at}:${index}`,
+        title: `Estado actualizado · ${status}`,
+        at: event.at,
+        claim,
+        correction: false,
+      });
+    }
+    return notices;
+  }).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 25);
+}
+
+function readNoticeIds(key: string): string[] {
+  try {
+    const ids = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
 function BrandLogo({ partner = false }: { partner?: boolean }) {
   const filterId = useId();
   return (
@@ -175,7 +221,8 @@ export function App() {
     [selected, setSelected] = useState<Claim | null>(null),
     [showDocumentCorrections, setShowDocumentCorrections] = useState(false),
     [loading, setLoading] = useState(false),
-    [notifications, setNotifications] = useState(false);
+    [notifications, setNotifications] = useState(false),
+    [noticeReads, setNoticeReads] = useState<{ key: string; ids: string[] }>({ key: "", ids: [] });
   const notify = (s: string) => {
     setToast(s);
   };
@@ -211,6 +258,24 @@ export function App() {
     if (actor) void refresh();
   }, [actor]);
   useEffect(() => {
+    if (api.demo || !actor || !["insured", "employee"].includes(actor.role)) return;
+    let active = true;
+    async function updateNotices() {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const newest = await api.listClaims();
+        if (active) setClaims(newest);
+      } catch {
+        // Keep the last loaded notices if the background refresh fails.
+      }
+    }
+    const interval = setInterval(updateNotices, 45_000);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [actor]);
+  useEffect(() => {
     if (toast) {
       const t = setTimeout(() => setToast(""), 6500);
       return () => clearTimeout(t);
@@ -233,6 +298,18 @@ export function App() {
   const administrative =
     !!actor && ["hr", "viewer", "admin", "support"].includes(actor.role);
   const canCreate = actor?.role === "insured" || actor?.role === "employee";
+  const liveNotices = !api.demo && canCreate ? customerNotices(claims) : [];
+  const noticeKey = actor ? `paramita-notices:${encodeURIComponent(actor.tenant)}:${encodeURIComponent(actor.sub)}` : "";
+  const readIds = new Set(noticeReads.key === noticeKey ? noticeReads.ids : readNoticeIds(noticeKey));
+  function markNoticesRead(ids: string[]) {
+    const next = [...new Set([...ids, ...readIds])].slice(0, 250);
+    setNoticeReads({ key: noticeKey, ids: next });
+    try {
+      localStorage.setItem(noticeKey, JSON.stringify(next));
+    } catch {
+      // Read state remains available in the current session.
+    }
+  }
   const viewStatus = (c: Claim) =>
     operator ? c.status : publicStatus(c.status as Status) || c.status;
   const active = claims.filter(
@@ -320,25 +397,40 @@ export function App() {
           <button
             className="icon-button notification-button"
             aria-label="Notificaciones"
-            onClick={() => setNotifications(!notifications)}
+            aria-expanded={notifications}
+            onClick={() => {
+              if (!notifications && !api.demo && canCreate) void refresh();
+              setNotifications(!notifications);
+            }}
           >
             <Bell size={20} />
-            {claims.some((c) => c.status === "Pendiente de documentos") && (
+            {(liveNotices.some((notice) => !readIds.has(notice.id)) ||
+              ((api.demo || !canCreate) && claims.some((c) => c.status === "Pendiente de documentos"))) && (
               <i />
             )}
           </button>
-          <div className="user">
-            <span className="avatar">{operator ? "AP" : "ML"}</span>
-            <div>
-              <strong>{operator ? "Equipo Paramita" : "Mi cuenta"}</strong>
-              <small>{labels[actor.role]}</small>
+          {!api.demo && canCreate ? (
+            <button className="user account-button" aria-label="Mi cuenta" onClick={() => go("Mi cuenta")}>
+              <span className="avatar"><UserRound size={18} /></span>
+              <span><strong>Mi cuenta</strong><small>{labels[actor.role]}</small></span>
+            </button>
+          ) : (
+            <div className="user">
+              <span className="avatar">{operator ? "AP" : "ML"}</span>
+              <div>
+                <strong>{operator ? "Equipo Paramita" : "Mi cuenta"}</strong>
+                <small>{labels[actor.role]}</small>
+              </div>
             </div>
-          </div>
+          )}
           <button
             className="icon-button"
             aria-label="Cerrar sesión"
             onClick={async () => {
               await api.logout();
+              setClaims([]);
+              setNotifications(false);
+              go("Inicio");
               setActor(null);
             }}
           >
@@ -374,6 +466,35 @@ export function App() {
               <X size={18} />
             </button>
           </div>
+          {!api.demo && canCreate ? (
+            <>
+              {liveNotices.some((notice) => !readIds.has(notice.id)) && (
+                <button className="text-button" onClick={() => markNoticesRead(liveNotices.map((notice) => notice.id))}>
+                  Marcar todas como leídas
+                </button>
+              )}
+              {liveNotices.map((notice) => (
+                <button
+                  className={`notice-row ${readIds.has(notice.id) ? "" : "unread"}`}
+                  key={notice.id}
+                  onClick={() => {
+                    markNoticesRead([notice.id]);
+                    void open(notice.claim, notice.correction);
+                    setNotifications(false);
+                  }}
+                >
+                  <Bell size={17} />
+                  <span>
+                    <b>{notice.title}</b>
+                    <small>{shortId(notice.claim.id)} · {date(notice.at)}{readIds.has(notice.id) ? "" : " · Sin leer"}</small>
+                  </span>
+                  <ChevronRight size={16} />
+                </button>
+              ))}
+              {!liveNotices.length && <p>No tienes notificaciones.</p>}
+            </>
+          ) : (
+            <>
           {claims
             .filter((c) => c.status === "Pendiente de documentos")
             .map((c) => (
@@ -398,9 +519,14 @@ export function App() {
           {!claims.some((c) => c.status === "Pendiente de documentos") && (
             <p>No tienes avisos pendientes.</p>
           )}
+            </>
+          )}
         </aside>
       )}
       <main>
+        {page === "Mi cuenta" && !api.demo && canCreate && (
+          <CustomerAccount key={actor.sub} roleLabel={labels[actor.role]} />
+        )}
         {api.demo &&
           ([
             "Notificaciones",
@@ -778,6 +904,89 @@ function PageHeading({
     </div>
   );
 }
+function CustomerAccount({ roleLabel }: { roleLabel: string }) {
+  const [details, setDetails] = useState<Awaited<ReturnType<typeof api.accountDetails>>>();
+  const [accountError, setAccountError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [changed, setChanged] = useState(false);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    let active = true;
+    api.accountDetails().then(
+      (data) => { if (active) setDetails(data); },
+      () => { if (active) setAccountError("No pudimos consultar los datos de tu cuenta."); },
+    );
+    return () => { active = false; };
+  }, []);
+
+  async function savePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const current = String(data.get("current"));
+    const password = String(data.get("password"));
+    setChanged(false);
+    if (password !== data.get("confirm")) {
+      setPasswordError("Las contraseñas nuevas no coinciden.");
+      return;
+    }
+    setPasswordError("");
+    setSaving(true);
+    try {
+      await api.changePassword(current, password);
+      form.reset();
+      setChanged(true);
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "";
+      if (name === "NotAuthorizedException") {
+        setPasswordError("Comprueba tu contraseña actual o vuelve a iniciar sesión.");
+      } else if (name === "InvalidPasswordException" || name === "PasswordHistoryPolicyViolationException") {
+        setPasswordError("Elige una contraseña nueva que cumpla las reglas de seguridad de tu cuenta.");
+      } else {
+        setPasswordError("No pudimos cambiar tu contraseña. Intenta de nuevo.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <PageHeading title="Mi cuenta" text="Consulta tus datos y administra tu contraseña." />
+      <section className="panel account-panel">
+        <h2>Datos de acceso</h2>
+        {accountError ? <p role="alert">{accountError}</p> : details ? (
+          <dl className="summary-grid">
+            <div><dt>Perfil</dt><dd>{roleLabel}</dd></div>
+            <div>
+              <dt>Correo electrónico</dt>
+              <dd>{details.email ?? "Sin correo registrado"}</dd>
+              {details.email && <small>{details.emailVerified ? "Correo verificado" : "Correo pendiente de verificación"}</small>}
+            </div>
+            <div>
+              <dt>Aplicación autenticadora (MFA)</dt>
+              <dd>{details.authenticatorConfigured === undefined
+                ? "Estado no disponible"
+                : details.authenticatorConfigured ? "Configurada" : "Sin configurar"}</dd>
+            </div>
+          </dl>
+        ) : <p role="status">Consultando los datos de tu cuenta…</p>}
+      </section>
+      <section className="panel account-panel">
+        <h2>Cambiar contraseña</h2>
+        <form className="account-password" onSubmit={savePassword}>
+          <label>Contraseña actual<input name="current" type="password" autoComplete="current-password" required /></label>
+          <label>Nueva contraseña<input name="password" type="password" autoComplete="new-password" required /></label>
+          <label>Confirma la nueva contraseña<input name="confirm" type="password" autoComplete="new-password" required /></label>
+          {passwordError && <p role="alert">{passwordError}</p>}
+          {changed && <p role="status">Contraseña actualizada.</p>}
+          <button className="primary" disabled={saving}>{saving ? "Guardando…" : "Cambiar contraseña"}</button>
+        </form>
+      </section>
+    </>
+  );
+}
+
 function documentsToCorrect(claim: Claim) {
   if (["Finalizado", "Resultado informado"].includes(claim.status)) return [];
   const latestByType = new Map<string, Claim["documents"][number]>();
@@ -1782,7 +1991,9 @@ function ClaimDetail({
                 "En revisión",
                 "Aprobado internamente",
                 "Ingresado en aseguradora",
+                "En trámite con aseguradora",
                 "Finalizado",
+                "Resultado informado",
               ].includes(c.status),
             },
             { label: "Gestión con aseguradora", done: !!submission },
