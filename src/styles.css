@@ -1071,6 +1071,9 @@ tr:last-child td {
 .detail-body {
   padding: 0 27px 27px;
 }
+.detail-body.intake-documents {
+  padding-top: 24px;
+}
 .detail-body > .tabs {
   padding-top: 7px;
 }

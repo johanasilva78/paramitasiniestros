@@ -789,18 +789,24 @@ export function App() {
           <EnrollmentPage
             key={`new-claim-${actor.sub}`}
             title="Cargar siniestro"
-            text="Registra tu solicitud y adjunta los documentos en el expediente."
+            text="Completa los datos, adjunta tus documentos y envía la solicitud a Paramita."
           >
             {(items) => (
               <NewClaim
+                actor={actor}
                 enrollments={items}
                 onCancel={() => go("Inicio")}
-                onCreate={async (c) => {
-                  await refresh();
-                  await open(c);
-                  notify(
-                    "Borrador guardado. Adjunta los documentos y pulsa Enviar.",
-                  );
+                onDraftSaved={() => { void refresh(); }}
+                onLeaveDraft={() => {
+                  go("Mis siniestros");
+                  void refresh();
+                }}
+                onSubmit={(c) => {
+                  setSelected(c);
+                  setShowDocumentCorrections(false);
+                  setPage("Expediente");
+                  window.scrollTo(0, 0);
+                  void refresh();
                 }}
                 notify={notify}
               />
@@ -1526,19 +1532,51 @@ function EnrollmentSummary({ enrollment }: { enrollment: Enrollment }) {
     </dl>
   );
 }
+const newClaimSteps = [
+  "Póliza y trámite",
+  "Detalle del siniestro",
+  "Revisión de datos",
+  "Documentos",
+];
+
+function NewClaimSteps({ step }: { step: number }) {
+  return (
+    <div className="steps" role="group" aria-label="Pasos para cargar siniestro">
+      {newClaimSteps.map((label, index) => (
+        <div
+          className={index <= step ? "done" : ""}
+          aria-current={index === step ? "step" : undefined}
+          key={label}
+        >
+          <span aria-hidden="true">{index < step ? <Check size={16} /> : index + 1}</span>
+          <b>{label}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function NewClaim({
+  actor,
   enrollments,
   onCancel,
-  onCreate,
+  onDraftSaved,
+  onLeaveDraft,
+  onSubmit,
   notify,
 }: {
+  actor: Actor;
   enrollments: Enrollment[];
   onCancel: () => void;
-  onCreate: (c: Claim) => Promise<void>;
+  onDraftSaved: () => void;
+  onLeaveDraft: () => void;
+  onSubmit: (c: Claim) => void;
   notify: (s: string) => void;
 }) {
   const [step, setStep] = useState(0),
     [busy, setBusy] = useState(false),
+    [savedClaim, setSavedClaim] = useState<Claim | null>(null),
+    [saveError, setSaveError] = useState(""),
     [idempotency] = useState(() => crypto.randomUUID());
   const [enrollmentId, setEnrollmentId] = useState(
     enrollments.length === 1 ? enrollments[0].enrollmentId : "",
@@ -1580,44 +1618,56 @@ function NewClaim({
       return;
     }
     setBusy(true);
+    setSaveError("");
     try {
-      await onCreate(
-        await api.createClaim(
-          {
-            ...data,
-            modality,
-            specializedSurgery: modality === "surgery" && specializedSurgery !== "unknown"
-              ? specializedSurgery === "yes" : undefined,
-            enrollmentId,
-            enrollmentVersion: enrollment.enrollmentVersion,
-          },
-          idempotency,
-        ),
+      const created = await api.createClaim(
+        {
+          ...data,
+          modality,
+          specializedSurgery: modality === "surgery" && specializedSurgery !== "unknown"
+            ? specializedSurgery === "yes" : undefined,
+          enrollmentId,
+          enrollmentVersion: enrollment.enrollmentVersion,
+        },
+        idempotency,
       );
+      setSavedClaim(created);
+      onDraftSaved();
+      window.scrollTo(0, 0);
     } catch (e) {
-      notify((e as Error).message);
+      setSaveError((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
-  const steps = [
-    "Póliza y trámite",
-    "Detalle del siniestro",
-    "Revisión de datos",
-  ];
+  if (savedClaim) {
+    return (
+      <>
+        <NewClaimSteps step={3} />
+        <ClaimDetail
+          c={savedClaim}
+          actor={actor}
+          intake
+          showDocumentCorrections={false}
+          onBack={onLeaveDraft}
+          onUpdate={(updated) => {
+            if (savedClaim.status === "Borrador" && updated.status !== "Borrador") {
+              onSubmit(updated);
+            } else {
+              setSavedClaim(updated);
+            }
+          }}
+          notify={notify}
+        />
+      </>
+    );
+  }
   return (
     <>
-      <div className="steps">
-        {steps.map((s, i) => (
-          <div className={i <= step ? "done" : ""} key={s}>
-            <span>{i < step ? <Check size={16} /> : i + 1}</span>
-            <b>{s}</b>
-          </div>
-        ))}
-      </div>
+      <NewClaimSteps step={step} />
       <div className="form-layout">
         <form className="panel form-panel" onSubmit={next}>
-          <h2>{steps[step]}</h2>
+          <h2>{newClaimSteps[step]}</h2>
           {step === 0 && (
             <div className="form-fields">
               {enrollments.length > 1 && (
@@ -1812,6 +1862,12 @@ function NewClaim({
               </p>
             </>
           )}
+          {step === 2 && saveError && (
+            <div className="info-banner" role="alert">
+              <CircleAlert size={19} />
+              <span>No se pudo guardar el borrador. {saveError}</span>
+            </div>
+          )}
           <div className="form-actions">
             <button
               type="button"
@@ -1825,7 +1881,7 @@ function NewClaim({
               {busy ? (
                 <LoaderCircle className="spin" size={17} />
               ) : step === 2 ? (
-                "Guardar borrador"
+                "Guardar y cargar documentos"
               ) : (
                 "Continuar"
               )}
@@ -1869,6 +1925,7 @@ function NewClaim({
 function ClaimDetail({
   c,
   actor,
+  intake = false,
   showDocumentCorrections,
   onBack,
   onUpdate,
@@ -1876,6 +1933,7 @@ function ClaimDetail({
 }: {
   c: Claim;
   actor: Actor;
+  intake?: boolean;
   showDocumentCorrections: boolean;
   onBack: () => void;
   onUpdate: (c: Claim) => void;
@@ -1884,7 +1942,7 @@ function ClaimDetail({
   const customer = ["insured", "employee"].includes(actor.role);
   const corrections = customer ? documentsToCorrect(c) : [];
   const [tab, setTab] = useState(
-      showDocumentCorrections || (customer && (c.status === "Borrador" || c.documents.length === 0))
+      intake || showDocumentCorrections || (customer && (c.status === "Borrador" || c.documents.length === 0))
         ? "Documentos"
         : "Resumen",
     ),
@@ -2031,7 +2089,8 @@ function ClaimDetail({
         <ArrowLeft size={16} />
         {operator ? "Volver a la bandeja asignada" : "Volver a mis siniestros"}
       </button>
-      <section className="panel detail-head">
+      {!intake && draft && customer && <NewClaimSteps step={3} />}
+      {!intake && <section className="panel detail-head">
         <div className="detail-title">
           <span className="stat-icon blue">
             <ClipboardList size={26} />
@@ -2053,7 +2112,7 @@ function ClaimDetail({
           </div>
           <span className="insurer-tag">{insurerName(c)}</span>
         </div>
-        <div className="timeline">
+        {!draft && <div className="timeline">
           {[
             { label: "Registro", done: true },
             {
@@ -2091,8 +2150,8 @@ function ClaimDetail({
               </small>
             </div>
           ))}
-        </div>
-        <div className="claim-next-step">
+        </div>}
+        {!draft && <div className="claim-next-step">
           <p><strong>{finished ? "Resultado" : "Siguiente paso"}</strong> · {nextStep}</p>
           {!finished && (
             <p className={hasSla && elapsedHours >= slaHours ? "sla-overdue" : "muted"}>
@@ -2100,9 +2159,9 @@ function ClaimDetail({
               {hasSla && ` · SLA interno de ${slaHours} h${elapsedHours >= slaHours ? " · Vencido" : ""}`}
             </p>
           )}
-        </div>
-      </section>
-      {!configured && (
+        </div>}
+      </section>}
+      {!intake && !configured && (
         <div className="info-banner">
           <CircleAlert size={20} />
           <span>
@@ -2112,8 +2171,8 @@ function ClaimDetail({
           </span>
         </div>
       )}
-      <section className="panel detail-body">
-        <div className="tabs">
+      <section className={`panel detail-body${intake ? " intake-documents" : ""}`}>
+        {!intake && <div className="tabs">
           {[
             "Resumen",
             "Documentos",
@@ -2132,7 +2191,7 @@ function ClaimDetail({
               {t === "Documentos" && <span>{c.documents.length}</span>}
             </button>
           ))}
-        </div>
+        </div>}
         {tab === "Resumen" && (
           <div className="detail-grid">
             <div>
@@ -2261,7 +2320,7 @@ function ClaimDetail({
             )}
             <div className="section-heading">
               <div>
-                <h2>Documentos de tu expediente</h2>
+                <h2>{intake || (draft && customer) ? "Cargar documentos" : "Documentos de tu expediente"}</h2>
                 <p>
                   Sólo PDF · Hasta 10 MB en conjunto para los documentos de la solicitud.
                 </p>
@@ -2270,6 +2329,9 @@ function ClaimDetail({
                 {(totalBytes / 1024 / 1024).toFixed(2)} de 10 MB
               </span>
             </div>
+            {draft && customer && !api.demo && (
+              <p>Cuando esté disponible, el resultado del análisis con IA aparecerá junto al PDF.</p>
+            )}
             <div className="info-banner">
               <CircleAlert size={19} />
               <span>
@@ -2406,6 +2468,7 @@ function ClaimDetail({
                       : uploaded.has(r.id) ? "Nueva versión" : "Adjuntar"}
                     <input
                       type="file"
+                      aria-label={`Adjuntar ${r.label}`}
                       disabled={busy}
                       accept=".pdf,application/pdf"
                       onChange={(e) => {
