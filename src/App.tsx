@@ -173,6 +173,7 @@ export function App() {
     [claims, setClaims] = useState<Claim[]>([]),
     [page, setPage] = useState("Inicio"),
     [selected, setSelected] = useState<Claim | null>(null),
+    [showDocumentCorrections, setShowDocumentCorrections] = useState(false),
     [loading, setLoading] = useState(false),
     [notifications, setNotifications] = useState(false);
   const notify = (s: string) => {
@@ -219,9 +220,10 @@ export function App() {
     setPage(p);
     setSelected(null);
   }
-  async function open(c: Claim) {
+  async function open(c: Claim, correctDocuments = false) {
     try {
       setSelected(await api.getClaim(c.id));
+      setShowDocumentCorrections(correctDocuments);
       setPage("Expediente");
     } catch (e) {
       notify((e as Error).message);
@@ -658,6 +660,7 @@ export function App() {
             key={selected.id}
             c={selected}
             actor={actor}
+            showDocumentCorrections={showDocumentCorrections}
             notify={notify}
             onBack={() => go("Mis siniestros")}
             onUpdate={(c) => {
@@ -775,14 +778,27 @@ function PageHeading({
     </div>
   );
 }
+function documentsToCorrect(claim: Claim) {
+  if (["Finalizado", "Resultado informado"].includes(claim.status)) return [];
+  const latestByType = new Map<string, Claim["documents"][number]>();
+  for (const document of claim.documents) {
+    if (document.state !== "UPLOADED" || isReceipt(document.type) || isResolution(document.type)) continue;
+    const latest = latestByType.get(document.type);
+    if (!latest || document.version > latest.version) latestByType.set(document.type, document);
+  }
+  return [...latestByType.values()].filter((document) => document.reviewStatus === "OBSERVED");
+}
+
 function ClaimTable({
   claims,
   onOpen,
   viewStatus,
+  showCorrections = false,
 }: {
   claims: Claim[];
-  onOpen: (c: Claim) => void;
+  onOpen: (c: Claim, correctDocuments?: boolean) => void;
   viewStatus: (c: Claim) => string;
+  showCorrections?: boolean;
 }) {
   return claims.length ? (
     <div className="table-scroll">
@@ -799,35 +815,39 @@ function ClaimTable({
           </tr>
         </thead>
         <tbody>
-          {claims.map((c) => (
-            <tr key={c.id}>
-              <td>
-                <button className="folio" onClick={() => onOpen(c)}>
-                  {shortId(c.id)}
-                </button>
-              </td>
-              <td>{c.insured}</td>
-              <td>
-                {insurerName(c)}
-                <br />
-                <small>{branches[coverageOf(c).branch]}</small>
-              </td>
-              <td>{procedureLabel(c)}</td>
-              <td className="nowrap">{date(c.createdAt)}</td>
-              <td>
-                <Badge status={viewStatus(c)} />
-              </td>
-              <td>
-                <button
-                  className="table-button"
-                  onClick={() => onOpen(c)}
-                  aria-label={`Ver ${shortId(c.id)}`}
-                >
-                  Ver <ChevronRight size={13} />
-                </button>
-              </td>
-            </tr>
-          ))}
+          {claims.map((c) => {
+            const needsCorrection = showCorrections && documentsToCorrect(c).length > 0;
+            return (
+              <tr key={c.id}>
+                <td>
+                  <button className="folio" onClick={() => onOpen(c)}>
+                    {shortId(c.id)}
+                  </button>
+                </td>
+                <td>{c.insured}</td>
+                <td>
+                  {insurerName(c)}
+                  <br />
+                  <small>{branches[coverageOf(c).branch]}</small>
+                </td>
+                <td>{procedureLabel(c)}</td>
+                <td className="nowrap">{date(c.createdAt)}</td>
+                <td>
+                  <Badge status={viewStatus(c)} />
+                  {needsCorrection && <span className="document-review-state">Requiere tu acción</span>}
+                </td>
+                <td>
+                  <button
+                    className="table-button"
+                    onClick={() => onOpen(c, needsCorrection)}
+                    aria-label={`${needsCorrection ? "Corregir documentos de" : "Ver"} ${shortId(c.id)}`}
+                  >
+                    {needsCorrection ? "Corregir documentos" : "Ver"} <ChevronRight size={13} />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -843,7 +863,7 @@ function ClaimsPage({
   canCreate,
 }: {
   claims: Claim[];
-  onOpen: (c: Claim) => void;
+  onOpen: (c: Claim, correctDocuments?: boolean) => void;
   viewStatus: (c: Claim) => string;
   onNew: () => void;
   canCreate: boolean;
@@ -854,9 +874,11 @@ function ClaimsPage({
     [insurer, setInsurer] = useState(""),
     [branch, setBranch] = useState(""),
     [current, setCurrent] = useState(1);
+  const corrections = new Set(canCreate ? claims.filter((c) => documentsToCorrect(c).length).map((c) => c.id) : []);
+  const actionFilter = "Requiere tu acción";
   const filtered = claims.filter(
     (c) =>
-      (filter === "Todos" || viewStatus(c) === filter) &&
+      (filter === "Todos" || (filter === actionFilter ? corrections.has(c.id) : viewStatus(c) === filter)) &&
       (!modality || c.modality === modality) &&
       (!insurer || coverageOf(c).insurer === insurer) &&
       (!branch || coverageOf(c).branch === branch) &&
@@ -923,7 +945,7 @@ function ClaimsPage({
       />
       <section className="panel">
         <div className="tabs">
-          {["Todos", ...new Set(claims.map(viewStatus))].map((t) => (
+          {["Todos", ...(canCreate ? [actionFilter] : []), ...new Set(claims.map(viewStatus))].map((t) => (
             <button
               className={filter === t ? "active" : ""}
               key={t}
@@ -936,7 +958,9 @@ function ClaimsPage({
               <span>
                 {t === "Todos"
                   ? claims.length
-                  : claims.filter((c) => viewStatus(c) === t).length}
+                  : t === actionFilter
+                    ? corrections.size
+                    : claims.filter((c) => viewStatus(c) === t).length}
               </span>
             </button>
           ))}
@@ -1003,6 +1027,7 @@ function ClaimsPage({
           claims={filtered.slice((current - 1) * 8, current * 8)}
           onOpen={onOpen}
           viewStatus={viewStatus}
+          showCorrections={canCreate}
         />
         <div className="pagination">
           <span>{filtered.length} siniestros encontrados</span>
@@ -1610,18 +1635,22 @@ function NewClaim({
 function ClaimDetail({
   c,
   actor,
+  showDocumentCorrections,
   onBack,
   onUpdate,
   notify,
 }: {
   c: Claim;
   actor: Actor;
+  showDocumentCorrections: boolean;
   onBack: () => void;
   onUpdate: (c: Claim) => void;
   notify: (s: string) => void;
 }) {
+  const customer = ["insured", "employee"].includes(actor.role);
+  const corrections = customer ? documentsToCorrect(c) : [];
   const [tab, setTab] = useState(
-      ["insured", "employee"].includes(actor.role) && c.documents.length === 0
+      showDocumentCorrections || (customer && c.documents.length === 0)
         ? "Documentos"
         : "Resumen",
     ),
@@ -1631,7 +1660,15 @@ function ClaimDetail({
     [folio, setFolio] = useState(""),
     [channel, setChannel] = useState(""),
     [evidence, setEvidence] = useState(""),
-    [expiredClassification, setExpiredClassification] = useState("");
+    [expiredClassification, setExpiredClassification] = useState(""),
+    [focusDocument, setFocusDocument] = useState(showDocumentCorrections ? corrections[0]?.type : undefined);
+  useEffect(() => {
+    if (tab !== "Documentos" || !focusDocument) return;
+    const row = document.getElementById(`document-row-${focusDocument}`);
+    row?.focus();
+    row?.scrollIntoView({ block: "nearest" });
+    setFocusDocument(undefined);
+  }, [tab, focusDocument]);
   const pendingClassification = api.demo
     ? ""
     : c.documents
@@ -1847,6 +1884,12 @@ function ClaimDetail({
                   <dt>Última actualización</dt>
                   <dd>{date(c.updatedAt)}</dd>
                 </div>
+                {submission && (
+                  <div>
+                    <dt>Folio de la aseguradora</dt>
+                    <dd>{submission.folio} · {date(submission.date)}</dd>
+                  </div>
+                )}
               </dl>
               <h3>Solicitud</h3>
               <p>{c.description}</p>
@@ -1900,6 +1943,21 @@ function ClaimDetail({
         )}
         {tab === "Documentos" && (
           <>
+            {corrections.length > 0 && (
+              <div className="info-banner">
+                <CircleAlert size={20} />
+                <div>
+                  <b>Requiere tu acción</b>
+                  <p>El equipo de revisión solicitó corregir estos documentos.</p>
+                  {corrections.map((d) => (
+                    <button className="secondary" key={d.id} onClick={() => setFocusDocument(d.type)}>
+                      {rows.find((row) => row.id === d.type)?.label ?? d.type}
+                      <ChevronRight size={14} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="section-heading">
               <div>
                 <h2>Documentos de tu expediente</h2>
@@ -1939,7 +1997,7 @@ function ClaimDetail({
                     ]
                   : []),
               ].map((r) => (
-                <div className="upload-row" key={r.id}>
+                <div className="upload-row" key={r.id} id={`document-row-${r.id}`} tabIndex={-1}>
                   <span
                     className={`file-icon ${uploaded.has(r.id) ? "received" : ""}`}
                   >
@@ -2002,9 +2060,9 @@ function ClaimDetail({
                             {d.reviewStatus && (
                               <span className="document-review-state">
                                 {d.reviewStatus === "ACCEPTED"
-                                  ? "Revisado"
-                                  : "Observado"}
-                                : {d.reviewReason}
+                                  ? "Revisión del equipo · Aceptado"
+                                  : "Revisión del equipo · Observado"}
+                                {d.reviewReason && ` · ${d.reviewReason}`}
                               </span>
                             )}
                             {operator && (
@@ -2021,10 +2079,12 @@ function ClaimDetail({
                   </div>
                   <label className={`upload-button ${busy ? "disabled" : ""}`}>
                     <UploadCloud size={17} />
-                    {uploaded.has(r.id) ? "Nueva versión" : "Adjuntar"}
+                    {corrections.some((d) => d.type === r.id)
+                      ? "Subir corrección"
+                      : uploaded.has(r.id) ? "Nueva versión" : "Adjuntar"}
                     <input
                       type="file"
-                      disabled={busy || c.status === "Finalizado"}
+                      disabled={busy || ["Finalizado", "Resultado informado"].includes(c.status)}
                       accept={
                         r.id === "GNP-18"
                           ? ".pdf,.xml"
