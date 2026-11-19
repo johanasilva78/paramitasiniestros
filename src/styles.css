@@ -1024,6 +1024,50 @@ tr:last-child td {
   font-size: 8px;
   color: #a0aaa9;
 }
+.timeline > [aria-current="step"] > span {
+  background: #e1efff;
+  color: #1e5791;
+}
+.claim-next-step {
+  margin: 18px 0 0;
+  text-align: center;
+}
+.claim-next-step p {
+  margin: 4px 0;
+}
+.sla-overdue {
+  color: #a53422;
+}
+.draft-send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 0;
+}
+.draft-send p {
+  margin: 0;
+}
+.message-list {
+  display: grid;
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+}
+.message-list li {
+  padding: 12px 16px;
+  border: 1px solid #e5e2dc;
+  border-radius: 8px;
+}
+.message-list small {
+  margin-inline-start: 8px;
+}
+.message-list p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .detail-body {
   padding: 0 27px 27px;
 }

@@ -45,7 +45,8 @@ export function MockWorkspace({
     [reasons, setReasons] = useState<Record<string, string>>({});
   const all = mock
     .stored<Claim[]>(mock.mockKeys.claims, mock.seedClaims())
-    .map(normalizeClaim);
+    .map(normalizeClaim)
+    .filter((claim) => claim.status !== "Borrador");
   function refresh() {
     setRevision(revision + 1);
     onRefresh();
@@ -285,7 +286,9 @@ export function MockWorkspace({
                   }
                   mock.persist(
                     mock.mockKeys.claims,
-                    all.map((c) => (c.id === id ? { ...c, assignee } : c)),
+                    mock.stored<Claim[]>(mock.mockKeys.claims, mock.seedClaims()).map(
+                      (c) => (c.id === id && c.status !== "Borrador" ? { ...c, assignee } : c),
+                    ),
                   );
                   notify("Asignación simulada guardada");
                   refresh();

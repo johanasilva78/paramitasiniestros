@@ -79,8 +79,15 @@ test("Todas las combinaciones SOW admiten recepción con reglas específicas só
       const docs = documentsForClaim(
         data as Parameters<typeof documentsForClaim>[0],
       );
-      if (insurer.id === "gnp" && branch === "gmm")
-        assert.equal(docs.length, 18);
+      if (insurer.id === "gnp" && branch === "gmm") {
+        assert.equal(docs.length, 17);
+        assert.ok(!docs.some((d) => d.id === "GNP-15"));
+        assert.ok(documentsForClaim({
+          ...data,
+          modality: "reimbursement",
+          insuredRelationship: "dependent",
+        } as Parameters<typeof documentsForClaim>[0]).some((d) => d.id === "GNP-15"));
+      }
       else {
         assert.deepEqual(
           docs.map((d) => d.id),

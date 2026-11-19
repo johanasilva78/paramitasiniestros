@@ -55,6 +55,12 @@ import {
   publicStatus,
   statuses,
   transition,
+  canOperate,
+  canUploadDocument,
+  currentClaimDocuments,
+  documentBytes,
+  maxDocumentBytes,
+  missingRequiredDocuments,
   type Claim,
   type Actor,
   type Enrollment,
@@ -78,8 +84,15 @@ const labels: Record<Actor["role"], string> = {
   approver: "Aprobador Paramita",
   viewer: "Monitoreo",
   admin: "Administrador",
-  support: "Soporte DANAconnect",
+  support: "Siniestros Paramita",
 };
+const supportPhone = import.meta.env.VITE_PARAMITA_CLAIMS_PHONE?.trim();
+const stageSlaHours = [
+  undefined,
+  import.meta.env.VITE_SLA_DOCUMENTS_HOURS,
+  import.meta.env.VITE_SLA_REVIEW_HOURS,
+  import.meta.env.VITE_SLA_INSURER_HOURS,
+].map(Number);
 const date = (s: string) =>
   new Date(s).toLocaleDateString("es-MX", {
     day: "2-digit",
@@ -575,8 +588,8 @@ export function App() {
                 <div className="eyebrow">CONTIGO, EN CADA PASO</div>
                 <h1>
                   {operator
-                    ? "Tu operación, en un solo lugar."
-                    : "Tu tranquilidad empieza aquí."}
+                    ? "Expedientes asignados"
+                    : "Registra y consulta tus siniestros"}
                 </h1>
                 <p>
                   {operator
@@ -592,8 +605,8 @@ export function App() {
                       <UploadCloud size={18} /> Cargar siniestro
                     </button>
                     <p className="claim-entry-hint">
-                      Registra tu solicitud, adjunta los documentos y consulta
-                      su avance en Mis siniestros.
+                      Guarda tu solicitud, adjunta los documentos y envíala a Paramita.
+                      Consulta el avance en Mis siniestros.
                     </p>
                   </>
                 )}
@@ -719,6 +732,7 @@ export function App() {
                 <button className="secondary" onClick={() => go("Documentos")}>
                   Consultar documentos <ArrowRight size={15} />
                 </button>
+                {supportPhone && <p>Siniestros Paramita · <a href={`tel:${supportPhone}`}>{supportPhone}</a></p>}
                 <span className="muted">
                   18 aseguradoras · 7 ramos en el catálogo
                 </span>
@@ -785,7 +799,7 @@ export function App() {
                   await refresh();
                   await open(c);
                   notify(
-                    "Tu solicitud fue registrada. Ya puedes adjuntar los documentos.",
+                    "Borrador guardado. Adjunta los documentos y pulsa Enviar.",
                   );
                 }}
                 notify={notify}
@@ -1494,7 +1508,7 @@ function EnrollmentSummary({ enrollment }: { enrollment: Enrollment }) {
   return (
     <dl className="summary-grid">
       <div>
-        <dt>Persona asegurada</dt>
+        <dt>Nombre del asegurado afectado</dt>
         <dd>{enrollment.insured}</dd>
       </div>
       <div>
@@ -1537,12 +1551,12 @@ function NewClaim({
   const [data, setData] = useState({
     requestedProcedure: "",
     modality: (enabledModalities?.[0] || "reimbursement") as Modality,
-    eventDate: "",
     description: "",
     subsequent: false,
     previousReference: "",
     consent: false,
   });
+  const [specializedSurgery, setSpecializedSurgery] = useState("");
   const modality = configured ? data.modality : "notice";
   const update = <K extends keyof typeof data>(
     key: K,
@@ -1550,6 +1564,7 @@ function NewClaim({
   ) => setData((current) => ({ ...current, [key]: value }));
   function selectEnrollment(id: string) {
     setEnrollmentId(id);
+    setSpecializedSurgery("");
     setData((current) => ({
       ...current,
       modality: enabledModalities?.[0] || "reimbursement",
@@ -1571,6 +1586,8 @@ function NewClaim({
           {
             ...data,
             modality,
+            specializedSurgery: modality === "surgery" && specializedSurgery !== "unknown"
+              ? specializedSurgery === "yes" : undefined,
             enrollmentId,
             enrollmentVersion: enrollment.enrollmentVersion,
           },
@@ -1586,7 +1603,7 @@ function NewClaim({
   const steps = [
     "Póliza y trámite",
     "Detalle del siniestro",
-    "Revisión y envío",
+    "Revisión de datos",
   ];
   return (
     <>
@@ -1643,9 +1660,10 @@ function NewClaim({
                   <Field label="Tipo de trámite *">
                     <select
                       value={modality}
-                      onChange={(e) =>
-                        update("modality", e.target.value as Modality)
-                      }
+                      onChange={(e) => {
+                        setSpecializedSurgery("");
+                        update("modality", e.target.value as Modality);
+                      }}
                     >
                       {Object.entries(modalities)
                         .filter(([id]) =>
@@ -1687,13 +1705,13 @@ function NewClaim({
                       }
                     >
                       <option value="initial">Inicial</option>
-                      <option value="subsequent">Subsecuente</option>
+                      <option value="subsequent">Complemento</option>
                     </select>
                   </Field>
                   {data.subsequent && (
                     <Field
-                      label="Referencia del caso anterior *"
-                      hint="La asociación se verificará por Paramita; no se fusionarán expedientes automáticamente."
+                      label="Número de siniestro *"
+                      hint="Indica el número asignado por la aseguradora al siniestro que estás complementando."
                     >
                       <input
                         required
@@ -1711,18 +1729,19 @@ function NewClaim({
           )}
           {step === 1 && (
             <div className="form-fields">
-              <Field label="Fecha del evento *">
-                <input
-                  type="date"
-                  required
-                  max={new Date().toISOString().slice(0, 10)}
-                  value={data.eventDate}
-                  onChange={(e) => update("eventDate", e.target.value)}
-                />
-              </Field>
+              {modality === "surgery" && (
+                <Field label="¿La cirugía es ortopédica, traumatológica, neurológica o vascular? *">
+                  <select required value={specializedSurgery} onChange={(e) => setSpecializedSurgery(e.target.value)}>
+                    <option value="" disabled>Selecciona una opción</option>
+                    <option value="yes">Sí</option>
+                    <option value="no">No</option>
+                    <option value="unknown">Aún no lo sé</option>
+                  </select>
+                </Field>
+              )}
               <Field
                 label="Descripción de la solicitud *"
-                hint="Describe brevemente tu trámite. La valoración y resolución corresponden a la aseguradora."
+                hint="Cuéntanos qué ocurrió y qué necesitas gestionar."
               >
                 <textarea
                   required
@@ -1731,13 +1750,12 @@ function NewClaim({
                   rows={5}
                   value={data.description}
                   onChange={(e) => update("description", e.target.value)}
-                  placeholder="Cuéntanos qué trámite necesitas gestionar…"
+                  placeholder="Por ejemplo, si solicitas un reembolso, describe la atención recibida."
                 />
               </Field>
               <div className="info-banner">
                 <FileText size={19} />
-                Podrás adjuntar tus documentos después de obtener el folio,
-                conservando todas las versiones en el mismo expediente.
+                Podrás adjuntar tus documentos después de guardar el borrador.
               </div>
             </div>
           )}
@@ -1756,7 +1774,7 @@ function NewClaim({
                   <dd>{procedureLabel({ ...data, modality })}</dd>
                 </div>
                 <div>
-                  <dt>Persona asegurada</dt>
+                  <dt>Nombre del asegurado afectado</dt>
                   <dd>{enrollment.insured}</dd>
                 </div>
                 <div>
@@ -1764,14 +1782,10 @@ function NewClaim({
                   <dd>{enrollment.policy}</dd>
                 </div>
                 <div>
-                  <dt>Fecha del evento</dt>
-                  <dd>{data.eventDate}</dd>
-                </div>
-                <div>
                   <dt>Reclamación</dt>
                   <dd>
                     {data.subsequent
-                      ? `Subsecuente · ${data.previousReference}`
+                      ? `Complemento · ${data.previousReference}`
                       : "Inicial"}
                   </dd>
                 </div>
@@ -1791,8 +1805,7 @@ function NewClaim({
                 </span>
               </label>
               <p className="muted">
-                El registro genera un acuse de recepción; la resolución del
-                siniestro corresponde a la aseguradora.{" "}
+                Paramita recibirá la solicitud cuando pulses Enviar en Documentos.{" "}
                 {configured
                   ? ""
                   : "Esta solicitud requiere revisión manual y definición de sus requisitos."}
@@ -1812,7 +1825,7 @@ function NewClaim({
               {busy ? (
                 <LoaderCircle className="spin" size={17} />
               ) : step === 2 ? (
-                "Registrar solicitud"
+                "Guardar borrador"
               ) : (
                 "Continuar"
               )}
@@ -1821,8 +1834,8 @@ function NewClaim({
           </div>
         </form>
         <aside className="panel guide-panel">
-          <h3>Un paso más cerca de resolver tu trámite</h3>
-          <p>Ten a la mano los soportes de tu reclamación.</p>
+          <h3>Antes de enviar tu solicitud</h3>
+          <p>Ten a mano los documentos de tu reclamación.</p>
           <div className="guide-item">
             <ShieldCheck size={22} />
             <div>
@@ -1871,18 +1884,24 @@ function ClaimDetail({
   const customer = ["insured", "employee"].includes(actor.role);
   const corrections = customer ? documentsToCorrect(c) : [];
   const [tab, setTab] = useState(
-      showDocumentCorrections || (customer && c.documents.length === 0)
+      showDocumentCorrections || (customer && (c.status === "Borrador" || c.documents.length === 0))
         ? "Documentos"
         : "Resumen",
     ),
     [busy, setBusy] = useState(false),
     [next, setNext] = useState<Status>("En validación"),
     [reason, setReason] = useState(""),
+    [message, setMessage] = useState(""),
+    [now, setNow] = useState(Date.now),
     [folio, setFolio] = useState(""),
     [channel, setChannel] = useState(""),
     [evidence, setEvidence] = useState(""),
     [expiredClassification, setExpiredClassification] = useState(""),
     [focusDocument, setFocusDocument] = useState(showDocumentCorrections ? corrections[0]?.type : undefined);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     if (tab !== "Documentos" || !focusDocument) return;
     const row = document.getElementById(`document-row-${focusDocument}`);
@@ -1935,10 +1954,49 @@ function ClaimDetail({
   const configured = hasGnpChecklist(c);
   const submission = submissionOf(c);
   const coverage = coverageOf(c);
+  const draft = c.status === "Borrador";
+  const missing = missingRequiredDocuments(c);
+  const current = currentClaimDocuments(c);
+  const totalBytes = documentBytes(c);
   const rows = documentsForClaim(c).filter((r) => ["M", "C"].includes(r.mark));
+  const historicalRows = configured
+    ? documentsFor(c.modality).filter((row) => current.has(row.id) && !rows.some(({ id }) => id === row.id))
+    : [];
+  const documentStage = draft || ["Pendiente de documentos", "Documentos pendientes"].includes(c.status);
+  const finished = ["Finalizado", "Resultado informado"].includes(c.status);
+  const atInsurer = ["Ingresado en aseguradora", "En trámite con aseguradora", "En espera", "Observado"].includes(c.status);
+  const stage = finished ? 4 : documentStage ? 1 : submission || c.status === "Aprobado internamente" || atInsurer ? 3 : 2;
+  const stageStatuses = [
+    [],
+    ["Borrador", "Pendiente de documentos", "Documentos pendientes"],
+    ["Recibido", "Documentado", "En validación", "Requiere revisión", "En revisión"],
+    ["Aprobado internamente", "Ingresado en aseguradora", "En trámite con aseguradora", "En espera", "Observado"],
+    ["Finalizado", "Resultado informado"],
+  ][stage];
+  let stageStart = c.createdAt;
+  for (const event of c.events) {
+    if (!stageStatuses.includes(event.status)) stageStart = "";
+    else if (!stageStart) stageStart = event.at;
+  }
+  stageStart ||= submission?.date ?? c.sentAt ?? c.createdAt;
+  const elapsedHours = Math.max(0, Math.floor((now - Date.parse(stageStart)) / 3_600_000));
+  const slaHours = stageSlaHours[stage];
+  const hasSla = Number.isFinite(slaHours) && slaHours > 0;
+  const nextStep = draft
+    ? "Adjunta los documentos mínimos y envía la solicitud a Paramita."
+    : documentStage
+      ? "Revisa la observación y adjunta los documentos solicitados."
+      : finished
+        ? "Consulta el resultado informado por Paramita."
+        : atInsurer
+          ? "Paramita dará seguimiento a la respuesta de la aseguradora."
+          : stage === 3
+            ? "Paramita ingresará el expediente ante la aseguradora."
+            : "Paramita revisará la solicitud y te avisará si necesita información adicional.";
   const uploaded = new Set(
     c.documents
-      .filter((d) => d.state === "UPLOADED")
+      .filter((d) => d.state === "UPLOADED" && d.scan !== "INFECTED" &&
+        (isReceipt(d.type) || isResolution(d.type) || current.get(d.type)?.id === d.id))
       .map((d) =>
         isReceipt(d.type)
           ? "INSURER-RECEIPT"
@@ -2000,11 +2058,7 @@ function ClaimDetail({
             { label: "Registro", done: true },
             {
               label: "Documentación",
-              done:
-                configured &&
-                rows
-                  .filter((r) => r.mark === "M")
-                  .every((r) => uploaded.has(r.id)),
+              done: !draft && (configured ? missing.length === 0 : !!c.sentAt),
             },
             {
               label: "Revisión Paramita",
@@ -2024,7 +2078,8 @@ function ClaimDetail({
               done: ["Finalizado", "Resultado informado"].includes(c.status),
             },
           ].map((s, i) => (
-            <div className={s.done ? "complete" : ""} key={s.label}>
+            <div className={s.done ? "complete" : ""} key={s.label}
+              aria-current={i === stage && !finished ? "step" : undefined}>
               <span>{s.done ? <Check size={14} /> : i + 1}</span>
               <b>{s.label}</b>
               <small>
@@ -2032,10 +2087,19 @@ function ClaimDetail({
                   ? date(c.createdAt)
                   : s.done
                     ? "Registrado"
-                    : "Pendiente"}
+                    : i === stage ? "En curso" : "Pendiente"}
               </small>
             </div>
           ))}
+        </div>
+        <div className="claim-next-step">
+          <p><strong>{finished ? "Resultado" : "Siguiente paso"}</strong> · {nextStep}</p>
+          {!finished && (
+            <p className={hasSla && elapsedHours >= slaHours ? "sla-overdue" : "muted"}>
+              {elapsedHours === 0 ? "Menos de una hora en esta etapa" : `${elapsedHours} h en esta etapa`}
+              {hasSla && ` · SLA interno de ${slaHours} h${elapsedHours >= slaHours ? " · Vencido" : ""}`}
+            </p>
+          )}
         </div>
       </section>
       {!configured && (
@@ -2054,6 +2118,7 @@ function ClaimDetail({
             "Resumen",
             "Documentos",
             "Historial",
+            ...(!draft && (customer || canOperate(actor, c)) ? ["Mensajes"] : []),
             ...(operator
               ? ["Revisión", "Gestión con aseguradora", "SICAS"]
               : []),
@@ -2094,7 +2159,7 @@ function ClaimDetail({
                   </dd>
                 </div>
                 <div>
-                  <dt>Persona asegurada</dt>
+                  <dt>Nombre del asegurado afectado</dt>
                   <dd>{c.insured}</dd>
                 </div>
                 <div>
@@ -2110,8 +2175,8 @@ function ClaimDetail({
                   <dd>{date(c.createdAt)}</dd>
                 </div>
                 <div>
-                  <dt>Fecha del evento</dt>
-                  <dd>{c.eventDate}</dd>
+                  <dt>Inicio del registro</dt>
+                  <dd>{date(c.createdAt)}</dd>
                 </div>
                 <div>
                   <dt>Última actualización</dt>
@@ -2145,7 +2210,7 @@ function ClaimDetail({
               )}
               {c.subsequent && (
                 <p className="info-banner">
-                  Referencia previa: {c.previousReference}. Asociación sujeta a
+                  Número de siniestro: {c.previousReference}. Asociación sujeta a
                   verificación.
                 </p>
               )}
@@ -2157,8 +2222,7 @@ function ClaimDetail({
                 <div>
                   <b>Revisa tus documentos</b>
                   <p>
-                    {uploaded.size} tipos documentales recibidos. Puedes
-                    adjuntar y actualizar tus archivos.
+                    {uploaded.size} tipos documentales recibidos. Consulta en Documentos qué archivos requieren atención.
                   </p>
                 </div>
               </div>
@@ -2199,26 +2263,45 @@ function ClaimDetail({
               <div>
                 <h2>Documentos de tu expediente</h2>
                 <p>
-                  PDF, JPG, PNG y XML para facturas · Máximo provisional 10 MB
-                  por archivo
+                  Sólo PDF · Hasta 10 MB en conjunto para los documentos de la solicitud.
                 </p>
               </div>
               <span className="badge blue">
-                {uploaded.size} tipos recibidos
+                {(totalBytes / 1024 / 1024).toFixed(2)} de 10 MB
               </span>
             </div>
             <div className="info-banner">
               <CircleAlert size={19} />
               <span>
                 {configured
-                  ? "Checklist preliminar GNP/GMM: los requisitos condicionales no bloquean la recepción."
+                  ? "Los documentos marcados como Mínimo se requieren para enviar. Adjunta los condicionales sólo si aplican."
                   : "Los soportes son opcionales durante la recepción. Esta lista no constituye un checklist aprobado."}{" "}
-                Se conserva cada versión que adjuntes.
+                Usa nombres sin acentos, con letras, números, espacios, guiones o guiones bajos.
               </span>
             </div>
+            {draft && customer && (
+              <div className="draft-send">
+                <p>
+                  {missing.length
+                    ? `Faltan ${missing.length} tipos de documento mínimo.`
+                    : "El borrador está listo. Al enviar, Paramita recibirá la solicitud y los archivos quedarán cerrados a cambios salvo que te pidan una corrección."}
+                </p>
+                <button
+                  className="primary"
+                  disabled={busy || missing.length > 0 || totalBytes > maxDocumentBytes}
+                  onClick={() => void perform(async () => {
+                    onUpdate(await api.submitClaim(c));
+                    notify("Solicitud enviada a Paramita");
+                  })}
+                >
+                  Enviar <ArrowRight size={16} />
+                </button>
+              </div>
+            )}
             <div className="upload-list">
               {[
                 ...rows,
+                ...historicalRows.map((row) => ({ ...row, mark: "Histórico" })),
                 ...(operator
                   ? [
                       {
@@ -2249,9 +2332,10 @@ function ClaimDetail({
                     <small>
                       {r.id === "SUPPORT"
                         ? "Soporte opcional · requisitos por confirmar"
+                        : r.mark === "Histórico" ? "Adjunto histórico"
                         : r.mark === "C"
                           ? "Condicional · sólo si aplica"
-                          : "Marca base · pendiente de aprobación"}
+                          : "Mínimo para enviar"}
                       {c.documents
                         .filter(
                           (d) =>
@@ -2261,7 +2345,7 @@ function ClaimDetail({
                         )
                         .map((d) => (
                           <span key={d.id}>
-                            <button
+                            {d.state === "UPLOADED" ? <button
                               className="document-version"
                               onClick={() =>
                                 void perform(() => api.download(c, d.id))
@@ -2272,7 +2356,7 @@ function ClaimDetail({
                               {(d.size / 1024).toFixed(0)} KB ·{" "}
                               {d.scan === "CLEAN" ? "Analizado" : "Cuarentena"}
                               <ArrowDownToLine size={12} />
-                            </button>
+                            </button> : <span className="document-review-state">{d.name} · Carga incompleta</span>}
                             {d.classification &&
                               d.classification.storageVersion === d.storageVersion &&
                               d.classification.expectedType === d.type && (
@@ -2302,7 +2386,8 @@ function ClaimDetail({
                                 {d.reviewReason && ` · ${d.reviewReason}`}
                               </span>
                             )}
-                            {operator && (
+                            {operator && !finished && r.mark !== "Histórico" && d.state === "UPLOADED" &&
+                              current.get(d.type)?.id === d.id && (
                               <DocumentReview
                                 c={c}
                                 documentId={d.id}
@@ -2314,28 +2399,22 @@ function ClaimDetail({
                         ))}
                     </small>
                   </div>
-                  <label className={`upload-button ${busy ? "disabled" : ""}`}>
+                  {r.mark !== "Histórico" && canUploadDocument(actor, c, r.id) && <label className={`upload-button ${busy ? "disabled" : ""}`}>
                     <UploadCloud size={17} />
                     {corrections.some((d) => d.type === r.id)
                       ? "Subir corrección"
                       : uploaded.has(r.id) ? "Nueva versión" : "Adjuntar"}
                     <input
                       type="file"
-                      disabled={busy || ["Finalizado", "Resultado informado"].includes(c.status)}
-                      accept={
-                        r.id === "GNP-18"
-                          ? ".pdf,.xml"
-                          : r.id === "SUPPORT"
-                            ? ".pdf,.png,.jpg,.jpeg,.xml"
-                            : ".pdf,.png,.jpg,.jpeg"
-                      }
+                      disabled={busy}
+                      accept=".pdf,application/pdf"
                       onChange={(e) => {
                         if (e.target.files?.[0])
                           void upload(r.id, e.target.files[0]);
                         e.target.value = "";
                       }}
                     />
-                  </label>
+                  </label>}
                 </div>
               ))}
             </div>
@@ -2364,6 +2443,40 @@ function ClaimDetail({
               ))}
             </div>
           </>
+        )}
+        {tab === "Mensajes" && (
+          <section className="claim-messages">
+            <div className="section-heading">
+              <h2>Mensajes del expediente</h2>
+              <button className="secondary" disabled={busy} onClick={() => void perform(async () => {
+                onUpdate(await api.getClaim(c.id));
+              })}>Actualizar mensajes</button>
+            </div>
+            {c.messages?.length ? (
+              <ol className="message-list">
+                {c.messages.map((item) => (
+                  <li key={item.id}>
+                    <b>{item.from === "staff" ? "Equipo Paramita" : "Asegurado"}</b>
+                    <small>{new Date(item.at).toLocaleString("es-MX")}</small>
+                    <p>{item.text}</p>
+                  </li>
+                ))}
+              </ol>
+            ) : <p>Aún no hay mensajes sobre esta solicitud.</p>}
+            <form className="form-fields" onSubmit={(event) => {
+              event.preventDefault();
+              void perform(async () => {
+                onUpdate(await api.sendClaimMessage(c, message));
+                setMessage("");
+              });
+            }}>
+              <Field label="Mensaje">
+                <textarea value={message} rows={4} required maxLength={1000}
+                  onChange={(event) => setMessage(event.target.value)} />
+              </Field>
+              <button className="primary" disabled={busy || !message.trim()}>Enviar mensaje</button>
+            </form>
+          </section>
         )}
         {tab === "Revisión" && (
           <>

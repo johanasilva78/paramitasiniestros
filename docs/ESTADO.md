@@ -1,5 +1,15 @@
 # Estado verificable de la implementación
 
+## Observaciones al portal · 19/11/2026
+
+El alta usa el padrón de la cuenta para comprobar la relación entre asegurado y póliza. Los expedientes nuevos se guardan como borradores. **Documentos → Enviar** comprueba los mínimos aplicables, registra la recepción y cierra la carga ordinaria. Paramita puede solicitar correcciones. El límite de 10 MB se aplica a las versiones vigentes de los documentos de la solicitud. El acuse y la resolución externa se cargan aparte por el equipo asignado. Los expedientes anteriores conservan su estado, folio y adjuntos.
+
+El checklist provisional usa las marcas base de cada trámite GNP/GMM. La identificación del dependiente se pide cuando corresponde y el formato de cirugía especializada aparece según la respuesta del asegurado. La aprobación de mínimos y de reglas adicionales por padecimiento, hospital o preexistencia sigue pendiente. Las coberturas sin checklist configurado conservan la recepción para revisión manual.
+
+El expediente incluye mensajería entre el asegurado y el equipo asignado, el siguiente paso y el tiempo transcurrido en la etapa actual. En Amplify Hosting se pueden configurar horas de SLA por etapa y el teléfono oficial de Siniestros Paramita con las variables de `.env.example`. El vencimiento aparece en pantalla cuando hay un SLA configurado. Las alertas programadas y la conciliación automática de correo y WhatsApp requieren sus propias integraciones.
+
+La clasificación disponible identifica la categoría del adjunto cuando el validador está conectado. La comprobación de identidad, RFC, vigencia y emisores requiere fuentes y reglas autorizadas. La detección de pólizas vigentes desde SICAS requiere acceso y contrato de API. La vista de empresa sigue disponible con datos de demostración. El panel real requiere métricas, importes y permisos de RR. HH. aprobados.
+
 La instrucción vigente es construir por ahora un mock completo e ir sustituyendo simulaciones por integraciones reales. El alcance final sigue siendo completo; no se considera un piloto. El frontend se publica en Amplify Hosting; el backend y las integraciones reales siguen pendientes de conexión y validación.
 
 ## Reconciliación con el SOW · 17/11/2026

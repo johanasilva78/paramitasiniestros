@@ -16,7 +16,7 @@ export const modalities = {
   notice: "Aviso de siniestro · revisión manual",
 } as const;
 export type Modality = keyof typeof modalities;
-export const checklistVersion = "gnp-2026-11-04-v1-provisional";
+export const checklistVersion = "gnp-2026-11-19-v2-provisional";
 export type Mark = "M" | "C" | "X" | "—";
 const rows: [string, string, string][] = [
   ["GNP", "Aviso de accidente o enfermedad", "MMMM"],
@@ -36,7 +36,7 @@ const rows: [string, string, string][] = [
   ["Personal", "Identificación oficial Dependiente", "MMMM"],
   ["Personal", "Comprobante de domicilio*", "MMMM"],
   ["Personal", "Estado de cuenta*", "MMXM"],
-  ["Personal", "Facturas PDF + XML", "MXXX"],
+  ["Personal", "Facturas en PDF", "MXXX"],
 ];
 export const checklist = rows.map(([group, label, marks], i) => ({
   id: `GNP-${String(i + 1).padStart(2, "0")}`,
@@ -49,9 +49,12 @@ export function documentsFor(modality: Modality) {
   if (modality === "notice") return [];
   return checklist.map((r) => ({ ...r, mark: r.marks[col] }));
 }
-export function documentsForClaim(c: Coverage & { modality: Modality }) {
+export function documentsForClaim(c: Coverage & { modality: Modality; specializedSurgery?: boolean }) {
   if (hasGnpChecklist(c) && c.modality !== "notice")
-    return documentsFor(c.modality);
+    return documentsFor(c.modality).filter((row) =>
+      (row.id !== "GNP-15" || coverageOf(c).insuredRelationship === "dependent") &&
+      (row.id !== "GNP-02" || c.modality !== "surgery" || c.specializedSurgery !== false),
+    );
   return [
     {
       id: "SUPPORT",
@@ -60,6 +63,67 @@ export function documentsForClaim(c: Coverage & { modality: Modality }) {
       mark: "C" as Mark,
     },
   ];
+}
+export const maxDocumentBytes = 10 * 1024 * 1024;
+export const pdfFileName = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,155}\.pdf$/i;
+
+export function currentClaimDocuments(c: Pick<Claim, "documents">) {
+  const current = new Map<string, Attachment>();
+  for (const document of c.documents) {
+    if (isReceipt(document.type) || isResolution(document.type)) continue;
+    if ((current.get(document.type)?.version ?? 0) < document.version)
+      current.set(document.type, document);
+  }
+  return current;
+}
+
+export function missingRequiredDocuments(c: Claim) {
+  const current = currentClaimDocuments(c);
+  return documentsForClaim(c).filter((row) => {
+    if (row.mark !== "M") return false;
+    const document = current.get(row.id);
+    return documentIncomplete(document);
+  });
+}
+
+function documentIncomplete(document?: Attachment) {
+  return document?.state !== "UPLOADED" || document.reviewStatus === "OBSERVED" ||
+    document.scan === "INFECTED";
+}
+
+export function canUploadDocument(a: Actor, c: Claim, type: string) {
+  if (a.tenant !== c.tenant || ["Finalizado", "Resultado informado"].includes(c.status))
+    return false;
+  if (isReceipt(type) || isResolution(type)) return canOperate(a, c);
+  if (a.sub !== c.owner && !canOperate(a, c)) return false;
+  if (!c.sentAt) return true;
+  if (!["Pendiente de documentos", "Documentos pendientes"].includes(c.status))
+    return false;
+  return documentIncomplete(currentClaimDocuments(c).get(type));
+}
+
+export function documentBytes(c: Claim, replacing?: string) {
+  return [...currentClaimDocuments(c).values()].reduce(
+    (total, document) => total + (document.type === replacing ? 0 : document.size),
+    0,
+  );
+}
+
+export function submitClaimDraft(a: Actor, c: Claim, at: string): Claim {
+  if (a.tenant !== c.tenant || a.sub !== c.owner || !["insured", "employee"].includes(a.role))
+    throw new Error("FORBIDDEN");
+  if (c.sentAt) return c;
+  if (c.status !== "Borrador") throw new Error("El expediente ya fue recibido");
+  if (missingRequiredDocuments(c).length)
+    throw new Error("Adjunta todos los documentos mínimos antes de enviar");
+  if (documentBytes(c) > maxDocumentBytes)
+    throw new Error("Los documentos superan 10 MB en conjunto");
+  return {
+    ...c,
+    sentAt: at,
+    status: "Recibido",
+    events: [...c.events, { at, actor: a.sub, status: "Recibido", message: "Solicitud recibida en el portal" }],
+  };
 }
 export function checklistVersionFor(c: Coverage & { modality: Modality }) {
   return hasGnpChecklist(c) && c.modality !== "notice"
@@ -140,6 +204,12 @@ export interface Actor {
   tenant: string;
   role: Role;
 }
+export interface ClaimMessage {
+  id: string;
+  at: string;
+  from: "insured" | "staff";
+  text: string;
+}
 export interface Attachment {
   id: string;
   type: string;
@@ -172,19 +242,22 @@ export interface Claim extends Coverage {
   assignee?: string;
   reviewer?: string;
   modality: Modality;
+  specializedSurgery?: boolean;
   insured: string;
   policy: string;
-  eventDate: string;
+  eventDate?: string;
   description: string;
   subsequent: boolean;
   previousReference?: string;
   consent: boolean;
   status: Status;
   createdAt: string;
+  sentAt?: string;
   updatedAt: string;
   version: number;
   checklistVersion: string;
   documents: Attachment[];
+  messages?: ClaimMessage[];
   events: { at: string; actor: string; status: Status; message: string }[];
   integration: "NOT_REQUESTED" | "PENDING" | "BLOCKED" | "DELIVERED";
   gnp?: {
@@ -225,6 +298,7 @@ const claimFields = z.object({
     "deductible",
     "notice",
   ]),
+  specializedSurgery: z.boolean().optional(),
   insured: z.string().trim().min(3).max(150),
   policy: z.string().trim().min(3).max(80),
   eventDate: z
@@ -236,7 +310,7 @@ const claimFields = z.object({
         new Date(x).toISOString().slice(0, 10) === x &&
         x <= new Date().toISOString().slice(0, 10),
       "Fecha inválida o futura",
-    ),
+    ).optional(),
   description: z.string().trim().min(10).max(2000),
   subsequent: z.boolean(),
   previousReference: z.string().max(100).optional(),
@@ -287,6 +361,12 @@ export const claimInput = claimFields
         path: ["modality"],
         message: "Selecciona una modalidad GNP/GMM",
       });
+    if (c.specializedSurgery !== undefined && c.modality !== "surgery")
+      ctx.addIssue({
+        code: "custom",
+        path: ["specializedSurgery"],
+        message: "La especialidad sólo aplica a programación de cirugía",
+      });
     if (
       c.modality === "notice" &&
       (!c.requestedProcedure || c.requestedProcedure.length < 3)
@@ -298,20 +378,21 @@ export const claimInput = claimFields
       });
   })
   .refine(
-    (x) => !x.subsequent || !!x.previousReference,
-    "Indica la referencia previa",
+    (x) => !x.subsequent || !!x.previousReference?.trim(),
+    "Indica el número de siniestro",
   );
 export function canRead(a: Actor, c: Claim) {
   return (
     a.tenant === c.tenant &&
     (a.sub === c.owner ||
-      ((a.role === "analyst" || a.role === "approver") && c.assignee === a.sub))
+      ((a.role === "analyst" || a.role === "approver") && c.assignee === a.sub && c.status !== "Borrador"))
   );
 }
 export function canOperate(a: Actor, c: Claim) {
   return (
     canRead(a, c) &&
     ["analyst", "approver"].includes(a.role) &&
+    c.status !== "Borrador" &&
     c.assignee === a.sub
   );
 }
@@ -359,6 +440,8 @@ export function transition(a: Actor, c: Claim, next: Status, reason: string) {
       c.owner === a.sub)
   )
     throw new Error("Se requiere aprobador distinto del revisor y solicitante");
+  if (next === "Aprobado internamente" && c.sentAt && missingRequiredDocuments(c).length)
+    throw new Error("Completa los documentos mínimos antes de aprobar");
   if (
     !hasGnpChecklist(c) &&
     [

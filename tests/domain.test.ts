@@ -9,6 +9,12 @@ import {
   transition,
   visibleClaim,
   publicStatus,
+  canUploadDocument,
+  documentsForClaim,
+  missingRequiredDocuments,
+  documentBytes,
+  maxDocumentBytes,
+  submitClaimDraft,
   type Actor,
   type Claim,
 } from "../shared/domain";
@@ -36,6 +42,40 @@ const claim: Claim = {
   events: [],
   integration: "NOT_REQUESTED",
 };
+test("El borrador exige los mínimos aplicables y cierra los adjuntos al enviarlo", () => {
+  const draft: Claim = { ...claim, status: "Borrador", assignee: analyst.sub };
+  const at = "2026-01-02T00:00:00.000Z";
+  assert.equal(canRead(analyst, draft), false);
+  assert.throws(() => submitClaimDraft(owner, draft, at), /documentos mínimos/);
+  const documents = missingRequiredDocuments(draft).map(({ id }) => ({
+    id, type: id, name: 'archivo.pdf', size: 128, mime: 'application/pdf',
+    key: id, sha256: '', version: 1, state: 'UPLOADED' as const, scan: 'CLEAN' as const,
+  }));
+  const ready = { ...draft, documents };
+  assert.throws(() => submitClaimDraft(owner, {
+    ...draft, documents: [{ ...documents[0], size: maxDocumentBytes + 1 }, ...documents.slice(1)],
+  }, at), /10 MB/);
+  const sent = submitClaimDraft(owner, ready, at);
+  assert.equal(sent.status, "Recibido");
+  assert.equal(sent.sentAt, at);
+  assert.equal(submitClaimDraft(owner, sent, at), sent);
+  assert.equal(canUploadDocument(owner, sent, documents[0].type), false);
+  assert.equal(canUploadDocument(analyst, sent, "INSURER-RECEIPT"), true);
+  const correction: Claim = {
+    ...sent, status: "Pendiente de documentos",
+    documents: [...documents, { ...documents[0], version: 2, reviewStatus: "OBSERVED" }],
+  };
+  assert.equal(canUploadDocument(owner, correction, documents[0].type), true);
+  assert.equal(canUploadDocument(owner, correction, documents[1].type), false);
+  assert.equal(documentBytes(correction), documentBytes(ready));
+});
+
+test("Cirugía muestra el formato especializado cuando aplica o falta confirmar", () => {
+  const surgery = { ...claim, modality: "surgery" as const };
+  assert.equal(documentsForClaim(surgery).find(({ id }) => id === "GNP-02")?.mark, "C");
+  assert.equal(documentsForClaim({ ...surgery, specializedSurgery: false }).some(({ id }) => id === "GNP-02"), false);
+  assert.equal(documentsForClaim({ ...surgery, specializedSurgery: true }).some(({ id }) => id === "GNP-02"), true);
+});
 test("QA-01: aislamiento por usuario, organización y asignación", () => {
   assert.ok(canRead(owner, claim));
   assert.ok(canRead(analyst, claim));

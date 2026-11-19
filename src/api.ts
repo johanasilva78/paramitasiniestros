@@ -19,6 +19,13 @@ import {
   normalizeClaim,
   isReceipt,
   isResolution,
+  canUploadDocument,
+  documentBytes,
+  maxDocumentBytes,
+  pdfFileName,
+  submitClaimDraft,
+  documentsForClaim,
+  canOperate,
   transition,
   type Claim,
   type Actor,
@@ -95,14 +102,14 @@ export function setDemoRole(role: Actor["role"]) {
   if (role === "approver") {
     const all = read();
     all.forEach((c) => {
-      c.assignee = actor.sub;
+      if (c.status !== "Borrador") c.assignee = actor.sub;
     });
     write(all);
   }
   if (role === "analyst") {
     const all = read();
     all.forEach((c) => {
-      c.assignee = actor.sub;
+      if (c.status !== "Borrador") c.assignee = actor.sub;
     });
     write(all);
   }
@@ -157,7 +164,8 @@ export async function listClaims() {
     if (["hr", "admin", "viewer", "support"].includes(actor.role)) return [];
     return read().filter(
       (c) =>
-        ["analyst", "approver"].includes(actor.role) || c.owner === actor.sub,
+        (["analyst", "approver"].includes(actor.role) && c.status !== "Borrador") ||
+        c.owner === actor.sub,
     );
   }
   let items: Claim[] = [];
@@ -215,7 +223,7 @@ export async function createClaim(data: unknown, key: string) {
     tenant: demoActor.tenant,
     owner: actor.sub,
     assignee: "demo-analyst",
-    status: "Recibido",
+    status: "Borrador",
     createdAt: date,
     updatedAt: date,
     version: 1,
@@ -225,15 +233,44 @@ export async function createClaim(data: unknown, key: string) {
       {
         at: date,
         actor: actor.sub,
-        status: "Recibido",
-        message: "Solicitud recibida",
+        status: "Borrador",
+        message: "Borrador guardado",
       },
     ],
     integration: "NOT_REQUESTED",
   };
   write([c, ...all]);
-  mock.addNotice(c.id, "Solicitud registrada (simulación)");
   return c;
+}
+export async function submitClaim(c: Claim) {
+  if (!demo) return request<Claim>(`/claims/${c.id}/submit`, "POST", {});
+  const all = read();
+  const current = all.find((item) => item.id === c.id) ?? c;
+  const updated = submitClaimDraft(actor, current, new Date().toISOString());
+  if (updated === current) return current;
+  updated.version++;
+  updated.updatedAt = updated.sentAt!;
+  write(all.map((item) => item.id === c.id ? updated : item));
+  mock.addNotice(c.id, "Solicitud recibida (simulación)");
+  return updated;
+}
+export async function sendClaimMessage(c: Claim, text: string) {
+  if (!demo) return request<Claim>(`/claims/${c.id}/messages`, "POST", { text });
+  const all = read();
+  const current = all.find((item) => item.id === c.id);
+  if (!current || current.status === "Borrador" ||
+    !(canOperate(actor, current) || (actor.sub === current.owner && ["insured", "employee"].includes(actor.role))))
+    throw new Error("La conversación no está disponible");
+  const message = text.trim();
+  if (!message || message.length > 1000) throw new Error("Escribe un mensaje de hasta 1.000 caracteres");
+  const messages = current.messages ?? [];
+  if (messages.length >= 50) throw new Error("Se alcanzó el límite de mensajes de este expediente");
+  const at = new Date().toISOString();
+  current.messages = [...messages, { id: crypto.randomUUID(), at, from: canOperate(actor, current) ? "staff" : "insured", text: message }];
+  current.version++;
+  current.updatedAt = at;
+  write(all);
+  return current;
 }
 export async function changeStatus(
   c: Claim,
@@ -260,6 +297,11 @@ export async function changeStatus(
   return updated;
 }
 export async function upload(c: Claim, type: string, file: File) {
+  if (!pdfFileName.test(file.name) || (file.type && file.type !== "application/pdf"))
+    throw new Error("Selecciona un PDF con un nombre que use letras sin acentos, números, espacios, guiones o guiones bajos");
+  const evidence = isReceipt(type) || isResolution(type);
+  if (file.size < 1 || file.size + (evidence ? 0 : documentBytes(c, type)) > maxDocumentBytes)
+    throw new Error("Los documentos no pueden superar 10 MB en conjunto");
   const digest = await crypto.subtle.digest(
     "SHA-256",
     await file.arrayBuffer(),
@@ -267,27 +309,19 @@ export async function upload(c: Claim, type: string, file: File) {
   const sha256 = Array.from(new Uint8Array(digest))
     .map((x) => x.toString(16).padStart(2, "0"))
     .join("");
-  const mime =
-    file.type ||
-    (file.name.endsWith(".xml")
-      ? "application/xml"
-      : "application/octet-stream");
-  if (file.size > 10 * 1024 * 1024) throw new Error("El archivo excede 10 MB");
-  if (
-    ![
-      "application/pdf",
-      "image/png",
-      "image/jpeg",
-      "application/xml",
-      "text/xml",
-    ].includes(mime)
-  )
-    throw new Error("Selecciona PDF, JPG, PNG o XML");
+  const mime = "application/pdf";
   if (demo) {
+    const documentId = crypto.randomUUID();
+    if (!(await file.slice(0, 512).text()).trimStart().startsWith("%PDF-"))
+      throw new Error("El contenido del archivo no corresponde a un PDF");
+    await mock.saveMockFile(documentId, file);
     const all = read();
     const current = all.find((x) => x.id === c.id)!;
-    const documentId = crypto.randomUUID();
-    await mock.saveMockFile(documentId, file);
+    if (!canUploadDocument(actor, current, type) || (!evidence &&
+      !documentsForClaim(current).some((row) => row.id === type && ["M", "C"].includes(row.mark))))
+      throw new Error("La carga no está disponible para este documento");
+    if (file.size + (evidence ? 0 : documentBytes(current, type)) > maxDocumentBytes)
+      throw new Error("Los documentos no pueden superar 10 MB en conjunto");
     current.documents.push({
       id: documentId,
       type,
