@@ -419,8 +419,22 @@ export async function saveResolution(
   return updated;
 }
 
-export async function assignClaim(id: string, assignee: string) {
-  if (!demo) return request(`/claims/${id}/assign`, "POST", { assignee });
+export type AssignableClaim = Pick<Claim, "id" | "createdAt" | "status" | "assignee" | "version">;
+export type AssignableStaff = { id: string; role: "analyst" | "approver"; displayName?: string };
+
+export function assignmentCases(cursor?: string) {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return request<{ items: AssignableClaim[]; cursor?: string }>(`/admin/assignments${query}`);
+}
+
+export function assignmentStaff() {
+  return request<{ items: AssignableStaff[] }>("/admin/staff");
+}
+
+export async function assignClaim(id: string, assignee: string, version?: number) {
+  if (!demo) return request<{ id: string; assignee: string; version?: number }>(
+    `/claims/${id}/assign`, "POST", { assignee, version },
+  );
   const user = mock
     .settings()
     .users.find(

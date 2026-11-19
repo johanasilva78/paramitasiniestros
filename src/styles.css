@@ -140,6 +140,11 @@ small {
   color: #07315d;
   white-space: nowrap;
 }
+.brand-home {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
 .brand-logo {
   display: block;
   width: 200px;

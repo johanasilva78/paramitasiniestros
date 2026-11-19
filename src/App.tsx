@@ -54,6 +54,7 @@ import {
   checklistVersion,
   publicStatus,
   statuses,
+  transition,
   type Claim,
   type Actor,
   type Enrollment,
@@ -163,7 +164,14 @@ function BrandLogo({ partner = false }: { partner?: boolean }) {
     </svg>
   );
 }
-function Brand() {
+function Brand({ onHome }: { onHome?: () => void }) {
+  if (onHome) {
+    return (
+      <button type="button" className="brand brand-home" onClick={onHome} aria-label="Ir a Inicio">
+        <BrandLogo />
+      </button>
+    );
+  }
   return (
     <div className="brand">
       <BrandLogo />
@@ -346,7 +354,8 @@ export function App() {
     ...(canCreate
       ? [["Nuevo siniestro", UploadCloud] as [string, LucideIcon]]
       : []),
-    ["Mis siniestros", ClipboardList],
+    ...(canCreate ? [["Mis siniestros", ClipboardList] as [string, LucideIcon]] : []),
+    ...(operator ? [["Bandeja asignada", ClipboardList] as [string, LucideIcon]] : []),
     ["Documentos", FileText],
     ...(canCreate
       ? [["Mis pólizas", ShieldCheck] as [string, LucideIcon]]
@@ -388,7 +397,7 @@ export function App() {
         </div>
       )}
       <header className="header">
-        <Brand />
+        <Brand onHome={() => go("Inicio")} />
         <div className="header-right">
           <span className="partner">
             <BrandLogo partner />
@@ -645,7 +654,8 @@ export function App() {
                 <button
                   className="stat-card"
                   key={label}
-                  onClick={() => go("Mis siniestros")}
+                  disabled={administrative}
+                  onClick={() => go(operator ? "Bandeja asignada" : "Mis siniestros")}
                 >
                   <span className={`stat-icon ${color}`}>
                     <Icon size={23} />
@@ -669,12 +679,14 @@ export function App() {
                     </h2>
                     <p>Consulta los últimos movimientos de tus trámites.</p>
                   </div>
-                  <button
-                    className="text-button"
-                    onClick={() => go("Mis siniestros")}
-                  >
-                    Ver todos <ArrowRight size={15} />
-                  </button>
+                  {!administrative && (
+                    <button
+                      className="text-button"
+                      onClick={() => go(operator ? "Bandeja asignada" : "Mis siniestros")}
+                    >
+                      Ver todos <ArrowRight size={15} />
+                    </button>
+                  )}
                 </div>
                 {loading ? (
                   <div className="empty">
@@ -729,7 +741,7 @@ export function App() {
             )}
           </>
         )}
-        {page === "Mis siniestros" && (
+        {(page === "Mis siniestros" || page === "Bandeja asignada") && (
           <ClaimsPage
             claims={claims}
             onOpen={open}
@@ -788,7 +800,7 @@ export function App() {
             actor={actor}
             showDocumentCorrections={showDocumentCorrections}
             notify={notify}
-            onBack={() => go("Mis siniestros")}
+            onBack={() => go(operator ? "Bandeja asignada" : "Mis siniestros")}
             onUpdate={(c) => {
               setSelected(c);
               void refresh();
@@ -861,7 +873,7 @@ export function App() {
             </section>
             <section className="panel">
               <h2>Asignación de expedientes</h2>
-              <AssignForm notify={notify} />
+              <AssignmentWorkspace key={actor.sub} notify={notify} />
             </section>
             <DocumentCatalog />
           </>
@@ -1135,7 +1147,7 @@ function ClaimsPage({
   return (
     <>
       <PageHeading
-        title={canCreate ? "Mis siniestros" : "Bandeja de siniestros"}
+        title={canCreate ? "Mis siniestros" : "Bandeja asignada"}
         text="Todos tus trámites y movimientos, en un solo lugar."
         action={
           <div className="actions">
@@ -1910,6 +1922,16 @@ function ClaimDetail({
     };
   }, [c.id, pendingClassification]);
   const operator = ["analyst", "approver"].includes(actor.role);
+  const availableTransitions = operator ? statuses.filter((status) => {
+    if (status === "Ingresado en GNP") return false;
+    try {
+      transition(actor, c, status, "Consulta de transiciones disponibles");
+      return true;
+    } catch {
+      return false;
+    }
+  }) : [];
+  const nextStatus = availableTransitions.includes(next) ? next : availableTransitions[0];
   const configured = hasGnpChecklist(c);
   const submission = submissionOf(c);
   const coverage = coverageOf(c);
@@ -1949,7 +1971,7 @@ function ClaimDetail({
     <>
       <button className="back-button" onClick={onBack}>
         <ArrowLeft size={16} />
-        Volver a mis siniestros
+        {operator ? "Volver a la bandeja asignada" : "Volver a mis siniestros"}
       </button>
       <section className="panel detail-head">
         <div className="detail-title">
@@ -2094,6 +2116,10 @@ function ClaimDetail({
                 <div>
                   <dt>Última actualización</dt>
                   <dd>{date(c.updatedAt)}</dd>
+                </div>
+                <div>
+                  <dt>ID completo del expediente</dt>
+                  <dd><code>{c.id}</code></dd>
                 </div>
                 {submission && (
                   <div>
@@ -2347,17 +2373,13 @@ function ClaimDetail({
               aprobación interna permite preparar la gestión ante la
               aseguradora.
             </p>
-            <div className="form-fields">
+            {nextStatus ? <div className="form-fields">
               <Field label="Nuevo estado">
                 <select
-                  value={next}
+                  value={nextStatus}
                   onChange={(e) => setNext(e.target.value as Status)}
                 >
-                  {statuses
-                    .filter((s) => s !== "Borrador" && s !== "Ingresado en GNP")
-                    .map((s) => (
-                      <option key={s}>{s}</option>
-                    ))}
+                  {availableTransitions.map((status) => <option key={status}>{status}</option>)}
                 </select>
               </Field>
               <Field label="Motivo / hallazgo interno">
@@ -2374,7 +2396,7 @@ function ClaimDetail({
                 disabled={busy || reason.trim().length < 5}
                 onClick={() =>
                   void perform(async () => {
-                    onUpdate(await api.changeStatus(c, next, reason));
+                    onUpdate(await api.changeStatus(c, nextStatus, reason));
                     setReason("");
                     notify("Transición registrada");
                   })
@@ -2383,7 +2405,7 @@ function ClaimDetail({
                 <ShieldCheck size={17} />
                 Registrar revisión
               </button>
-            </div>
+            </div> : <p>No hay cambios de estado disponibles para este expediente con tu perfil.</p>}
             {c.internalNotes && (
               <div className="info-banner">
                 Último hallazgo interno: {c.internalNotes}
@@ -2583,6 +2605,122 @@ function Reports({ claims }: { claims: Claim[] }) {
     </>
   );
 }
+function AssignmentWorkspace({ notify }: { notify: (s: string) => void }) {
+  const [cases, setCases] = useState<api.AssignableClaim[]>([]);
+  const [staff, setStaff] = useState<api.AssignableStaff[]>([]);
+  const [cursor, setCursor] = useState<string>();
+  const [reload, setReload] = useState(0);
+  const [id, setId] = useState("");
+  const [assignee, setAssignee] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const selected = cases.find((item) => item.id === id);
+  const memberLabel = (member: api.AssignableStaff) =>
+    `${member.displayName || member.id} · ${labels[member.role]}`;
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+    Promise.all([api.assignmentCases(), api.assignmentStaff()]).then(
+      ([page, directory]) => {
+        if (!active) return;
+        setCases(page.items);
+        setCursor(page.cursor);
+        setStaff(directory.items);
+        setLoading(false);
+      },
+      () => {
+        if (!active) return;
+        setError("No pudimos cargar la lista de asignación.");
+        setLoading(false);
+      },
+    );
+    return () => { active = false; };
+  }, [reload]);
+
+  async function more() {
+    if (!cursor) return;
+    setLoading(true);
+    setError("");
+    try {
+      const next = await api.assignmentCases(cursor);
+      setCases((current) => [...new Map([...current, ...next.items].map((item) => [item.id, item])).values()]);
+      setCursor(next.cursor);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function assign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selected || !assignee) return;
+    setLoading(true);
+    setError("");
+    try {
+      const updated = await api.assignClaim(selected.id, assignee, selected.version);
+      setCases((current) => current.map((item) =>
+        item.id === selected.id
+          ? { ...item, assignee, version: updated.version ?? item.version }
+          : item,
+      ));
+      setAssignee("");
+      notify("Responsable asignado. El expediente aparecerá en su bandeja.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      {loading && <p role="status">Cargando asignaciones…</p>}
+      {error && <p role="alert">{error}</p>}
+      <form className="inline-form" onSubmit={assign}>
+        <Field label="Expediente">
+          <select required value={id} disabled={loading || !cases.length} onChange={(e) => {
+            setId(e.target.value);
+            setAssignee("");
+          }}>
+            <option value="">Selecciona un expediente</option>
+            {cases.map((item) => (
+              <option key={item.id} value={item.id}>
+                {shortId(item.id)} · {item.status} · {date(item.createdAt)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Nuevo responsable">
+          <select required value={assignee} disabled={loading || !selected || !staff.length} onChange={(e) => setAssignee(e.target.value)}>
+            <option value="">Selecciona un analista o aprobador</option>
+            {staff.filter((member) => member.id !== selected?.assignee).map((member) => (
+              <option key={member.id} value={member.id}>{memberLabel(member)}</option>
+            ))}
+          </select>
+        </Field>
+        <button className="primary" disabled={loading || !selected || !assignee}>Asignar</button>
+      </form>
+      {selected && (
+        <p>Responsable actual: {selected.assignee
+          ? staff.find((member) => member.id === selected.assignee)?.displayName || selected.assignee
+          : "Sin asignar"}</p>
+      )}
+      {!loading && !error && !staff.length && <p>Registra un analista o aprobador de la organización para asignar expedientes.</p>}
+      <div className="actions">
+        <button className="secondary" disabled={loading} onClick={() => setReload((value) => value + 1)}>Actualizar lista</button>
+        {cursor && <button className="secondary" disabled={loading} onClick={() => void more()}>Cargar más expedientes</button>}
+      </div>
+      <details>
+        <summary>Asignar por identificador</summary>
+        <AssignForm notify={notify} />
+      </details>
+    </>
+  );
+}
+
 function AssignForm({ notify }: { notify: (s: string) => void }) {
   const [id, setId] = useState(""),
     [assignee, setAssignee] = useState(""),
@@ -2642,6 +2780,14 @@ function Login({
     [step, setStep] = useState(""),
     [totp, setTotp] = useState(""),
     [busy, setBusy] = useState(false);
+  function returnToSignIn() {
+    setMode("login");
+    setStep("");
+    setTotp("");
+    setCode("");
+    setPassword("");
+    notify("");
+  }
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -2677,10 +2823,10 @@ function Login({
         return;
       }
       setStep(result.nextStep.signInStep);
-      if (result.nextStep.signInStep === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP")
-        setTotp(
-          result.nextStep.totpSetupDetails.getSetupUri("Paramita").toString(),
-        );
+      setCode("");
+      setTotp(result.nextStep.signInStep === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP"
+        ? result.nextStep.totpSetupDetails.getSetupUri("Paramita").toString()
+        : "");
     } catch (e) {
       notify((e as Error).message);
     } finally {
@@ -2816,14 +2962,12 @@ function Login({
             )}
             <ArrowRight size={17} />
           </button>
-          {mode !== "login" && (
+          {(mode !== "login" || step) && (
             <button
               type="button"
               className="text-button"
-              onClick={() => {
-                setMode("login");
-                setStep("");
-              }}
+              disabled={busy}
+              onClick={returnToSignIn}
             >
               Volver al inicio de sesión
             </button>
@@ -2833,7 +2977,7 @@ function Login({
           </p>
           <div className="bottom-note">
             <LockKeyhole size={14} />
-            Acceso con verificación en dos pasos
+            Acceso protegido
           </div>
           {toast && (
             <div className="info-banner" role="status">
