@@ -258,22 +258,29 @@ export function App() {
     }
   }
   useEffect(() => {
+    let active = true;
     api
       .init()
       .then(async () => {
+        if (!active) return;
         if (api.demo) {
           setActor(api.demoActor);
         } else {
           try {
-            setActor(await api.me());
+            const currentActor = await api.me();
+            if (active) setActor(currentActor);
           } catch {}
         }
-        setReady(true);
+        if (active) setReady(true);
       })
       .catch((e) => {
+        if (!active) return;
         setFatal(e.message);
         setReady(true);
       });
+    return () => {
+      active = false;
+    };
   }, []);
   useEffect(() => {
     if (actor) void refresh();
@@ -2995,6 +3002,7 @@ function Login({
           })
         : await api.login(email, password);
       if (result.isSignedIn) {
+        returnToSignIn();
         await onLogin();
         return;
       }

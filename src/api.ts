@@ -40,6 +40,12 @@ export const demoActor: Actor = {
   role: "insured",
 };
 let actor = demoActor;
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
 function read(): Claim[] {
   return mock
     .stored<Claim[]>(mock.mockKeys.claims, mock.seedClaims())
@@ -77,13 +83,22 @@ export async function request<T>(
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "Error de conexión");
-  return data;
+  if (!r.ok) {
+    const data = await r.json().catch(() => null);
+    throw new ApiError(data?.error || "Error de conexión", r.status);
+  }
+  return r.json();
 }
 export async function me() {
   if (demo) return actor;
-  return request<Actor>("/me");
+  try {
+    return await request<Actor>("/me");
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      await logout();
+    }
+    throw error;
+  }
 }
 export async function listEnrollments() {
   if (demo) return mock.enrollments(actor.sub);
@@ -120,7 +135,16 @@ export async function login(
   password: string,
 ): Promise<SignInOutput> {
   if (demo) return { isSignedIn: true, nextStep: { signInStep: "DONE" } };
-  return signIn({ username: email, password });
+  const credentials = { username: email, password };
+  try {
+    return await signIn(credentials);
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "UserAlreadyAuthenticatedException") {
+      throw error;
+    }
+    await logout();
+    return signIn(credentials);
+  }
 }
 export async function confirmLogin(
   input: Parameters<typeof confirmSignIn>[0],
