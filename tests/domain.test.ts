@@ -13,6 +13,7 @@ import {
   documentsForClaim,
   missingRequiredDocuments,
   documentBytes,
+  claimDocumentName,
   maxDocumentBytes,
   submitClaimDraft,
   type Actor,
@@ -42,6 +43,16 @@ const claim: Claim = {
   events: [],
   integration: "NOT_REQUESTED",
 };
+test("El nombre de PDF usa la póliza y el número de siniestro sin caracteres especiales", () => {
+  const draft = { ...claim, id: "a1-b2", policy: "Pól. 123 / 4" };
+  assert.equal(claimDocumentName(draft, "GNP-01"), "GNP01POLIZAPOL1234SINIESTROA1B2.pdf");
+  assert.equal(claimDocumentName({ ...draft, subsequent: true, previousReference: "Sín / 87" }, "GNP-02"),
+    "GNP02POLIZAPOL1234SINIESTROSIN87.pdf");
+  assert.equal(claimDocumentName({ ...draft, gnp: {
+    folio: "GNP-999", channel: "Portal", date: "2026-01-01", evidenceId: "acuse", actor: analyst.sub,
+  } }, "INSURER-RESULT"), "INSURERRESULTPOLIZAPOL1234SINIESTROGNP999.pdf");
+});
+
 test("El borrador exige los mínimos aplicables y cierra los adjuntos al enviarlo", () => {
   const draft: Claim = { ...claim, status: "Borrador", assignee: analyst.sub };
   const at = "2026-01-02T00:00:00.000Z";

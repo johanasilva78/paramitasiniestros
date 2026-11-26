@@ -65,7 +65,14 @@ export function documentsForClaim(c: Coverage & { modality: Modality; specialize
   ];
 }
 export const maxDocumentBytes = 10 * 1024 * 1024;
-export const pdfFileName = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,155}\.pdf$/i;
+
+export function claimDocumentName(c: Claim, type: string) {
+  const clean = (value = "") =>
+    value.normalize("NFKD").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const reference = (c.subsequent && clean(c.previousReference)) ||
+    clean(submissionOf(c)?.folio) || clean(c.id);
+  return `${clean(type)}POLIZA${clean(c.policy) || "SINNUMERO"}SINIESTRO${reference}.pdf`;
+}
 
 export function currentClaimDocuments(c: Pick<Claim, "documents">) {
   const current = new Map<string, Attachment>();
