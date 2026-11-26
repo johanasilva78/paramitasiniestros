@@ -2055,3 +2055,24 @@ footer .brand-logo {
   flex: 1 1 200px;
   min-width: 0;
 }
+
+.assistant-widget {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 20;
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+}
+.assistant-widget .claim-chat {
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(68vh, 560px);
+  overflow: auto;
+  padding: 16px;
+  box-shadow: 0 8px 30px #17334d2b;
+}
+.assistant-launcher {
+  border-radius: 999px;
+  box-shadow: 0 4px 18px #17334d40;
+}

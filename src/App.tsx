@@ -377,7 +377,6 @@ export function App() {
       ? [["Nuevo siniestro", UploadCloud] as [string, LucideIcon]]
       : []),
     ...(canCreate ? [["Mis siniestros", ClipboardList] as [string, LucideIcon]] : []),
-    ...(actor.role === "insured" ? [["Consultar estatus", MessageCircle] as [string, LucideIcon]] : []),
     ...(operator ? [["Bandeja asignada", ClipboardList] as [string, LucideIcon]] : []),
     ["Documentos", FileText],
     ...(canCreate
@@ -549,9 +548,6 @@ export function App() {
         </aside>
       )}
       <main>
-        {page === "Consultar estatus" && actor.role === "insured" && (
-          <ClaimStatusChat key={`${actor.tenant}:${actor.sub}`} actor={actor} onOpen={open} />
-        )}
         {page === "Mi cuenta" && !api.demo && canCreate && (
           <CustomerAccount key={actor.sub} roleLabel={labels[actor.role]} />
         )}
@@ -903,6 +899,9 @@ export function App() {
           </>
         )}
       </main>
+      {actor.role === "insured" && (
+        <ClaimStatusChat key={`${actor.tenant}:${actor.sub}`} actor={actor} onOpen={open} />
+      )}
       <footer>
         <Brand />
         <span>Portal de Siniestros · Paramita</span>
@@ -921,14 +920,17 @@ export function App() {
   );
 }
 function ClaimStatusChat({ actor, onOpen }: { actor: Actor; onOpen: (claim: Claim) => void }) {
+  const assistantName = "Asistente Paramita";
+  const [expanded, setExpanded] = useState(false);
+  const panelId = useId();
   const greeting = "Hola. Puedo consultar el estatus de tus trámites. Escribe el folio que aparece en Mis siniestros o selecciona Ver mis trámites.";
-  const [history, setHistory] = useState([{ author: "Asistente", text: greeting }]);
+  const [history, setHistory] = useState([{ author: assistantName, text: greeting }]);
   const [question, setQuestion] = useState("");
   const [choices, setChoices] = useState<Claim[]>([]);
   const [current, setCurrent] = useState<Claim>();
   const [busy, setBusy] = useState(false);
   const own = (claim: Claim) => claim.owner === actor.sub && claim.tenant === actor.tenant;
-  const reply = (text: string) => setHistory((log) => [...log, { author: "Asistente", text }]);
+  const reply = (text: string) => setHistory((log) => [...log, { author: assistantName, text }]);
 
   async function ask(text: string, choice?: Claim) {
     const prompt = text.trim();
@@ -973,9 +975,12 @@ function ClaimStatusChat({ actor, onOpen }: { actor: Actor; onOpen: (claim: Clai
   }
 
   return (
-    <>
-      <PageHeading title="Consulta el estatus de tu trámite" text="Pregunta por el avance de un expediente o búscalo con su folio." />
-      <section className="panel claim-chat" aria-label="Asistente de trámites">
+    <aside className="assistant-widget" aria-label={assistantName}>
+      <section id={panelId} className="panel claim-chat" hidden={!expanded} aria-label="Consulta de estatus">
+        <div className="section-heading">
+          <h2>{assistantName}</h2>
+          <button className="icon-button" aria-label="Cerrar asistente" onClick={() => setExpanded(false)}><X size={18} /></button>
+        </div>
         <div className="chat-history" role="log" aria-live="polite">
           {history.map((entry, index) => (
             <div key={index} className={entry.author === "Tú" ? "chat-user" : "chat-assistant"}>
@@ -986,7 +991,7 @@ function ClaimStatusChat({ actor, onOpen }: { actor: Actor; onOpen: (claim: Clai
         </div>
         <div className="chat-actions">
           <button className="secondary" disabled={busy} onClick={() => void ask("Ver mis trámites")}>Ver mis trámites</button>
-          {current && <button className="secondary" disabled={busy} onClick={() => onOpen(current)}>Abrir {shortId(current.id)}</button>}
+          {current && <button className="secondary" disabled={busy} onClick={() => { setExpanded(false); onOpen(current); }}>Abrir {shortId(current.id)}</button>}
           {choices.map((claim) => (
             <button className="secondary" disabled={busy} key={claim.id} onClick={() => void ask(shortId(claim.id), claim)}>
               {shortId(claim.id)} · {procedureLabel(claim)}
@@ -998,7 +1003,10 @@ function ClaimStatusChat({ actor, onOpen }: { actor: Actor; onOpen: (claim: Clai
           <button className="primary" disabled={busy || !question.trim()}>{busy ? "Consultando…" : "Enviar"}</button>
         </form>
       </section>
-    </>
+      <button className="primary assistant-launcher" aria-expanded={expanded} aria-controls={panelId} onClick={() => setExpanded(!expanded)}>
+        <MessageCircle size={21} /> {assistantName}
+      </button>
+    </aside>
   );
 }
 
