@@ -10,7 +10,7 @@ frontend:
     build:
       commands:
         - |
-          if [ "${VITE_DEMO_MODE:-true}" = "false" ]; then
+          if [ "${VITE_DEMO_MODE:-false}" != "true" ]; then
             node -e '
               const config = JSON.parse(process.env.PARAMITA_OUTPUTS_JSON || "null");
               if (!config?.version || !config.auth?.user_pool_id ||

@@ -37,6 +37,7 @@ import {
   Building2,
   ChartNoAxesCombined,
   Mail,
+  MessageCircle,
   LockKeyhole,
   Flower,
   ExternalLink,
@@ -86,7 +87,6 @@ const labels: Record<Actor["role"], string> = {
   admin: "Administrador",
   support: "Siniestros Paramita",
 };
-const supportPhone = import.meta.env.VITE_PARAMITA_CLAIMS_PHONE?.trim();
 const stageSlaHours = [
   undefined,
   import.meta.env.VITE_SLA_DOCUMENTS_HOURS,
@@ -269,7 +269,10 @@ export function App() {
           try {
             const currentActor = await api.me();
             if (active) setActor(currentActor);
-          } catch {}
+          } catch (error) {
+            if (active && (error as Error).message !== "Inicia sesión para continuar")
+              notify(api.accessErrorMessage(error));
+          }
         }
         if (active) setReady(true);
       })
@@ -355,8 +358,7 @@ export function App() {
     return (
       <div className="boot">
         <CircleAlert />
-        <h2>Configuración pendiente</h2>
-        <p>{fatal}</p>
+        <h2>El portal no está disponible</h2>
       </div>
     );
   if (!actor)
@@ -375,6 +377,7 @@ export function App() {
       ? [["Nuevo siniestro", UploadCloud] as [string, LucideIcon]]
       : []),
     ...(canCreate ? [["Mis siniestros", ClipboardList] as [string, LucideIcon]] : []),
+    ...(actor.role === "insured" ? [["Consultar estatus", MessageCircle] as [string, LucideIcon]] : []),
     ...(operator ? [["Bandeja asignada", ClipboardList] as [string, LucideIcon]] : []),
     ["Documentos", FileText],
     ...(canCreate
@@ -392,15 +395,13 @@ export function App() {
   if (api.demo && actor.role === "support") nav.push(["Soporte", Activity]);
   return (
     <div className="app-shell">
-      {api.demo && (
-        <div className="demo-strip">
-          <span>
-            AMBIENTE DE DEMOSTRACIÓN · Datos ficticios · Sin conexión a AWS
-          </span>
-          <label>
-            Vista de{" "}
+      <header className="header">
+        <Brand onHome={() => go("Inicio")} />
+        <div className="header-right">
+          {api.demo && (
             <select
-              aria-label="Perfil de demostración"
+              className="profile-switch"
+              aria-label="Perfil"
               value={actor.role}
               onChange={(e) => {
                 setActor(api.setDemoRole(e.target.value as Actor["role"]));
@@ -413,12 +414,7 @@ export function App() {
                 </option>
               ))}
             </select>
-          </label>
-        </div>
-      )}
-      <header className="header">
-        <Brand onHome={() => go("Inicio")} />
-        <div className="header-right">
+          )}
           <span className="partner">
             <BrandLogo partner />
           </span>
@@ -553,6 +549,9 @@ export function App() {
         </aside>
       )}
       <main>
+        {page === "Consultar estatus" && actor.role === "insured" && (
+          <ClaimStatusChat key={`${actor.tenant}:${actor.sub}`} actor={actor} onOpen={open} />
+        )}
         {page === "Mi cuenta" && !api.demo && canCreate && (
           <CustomerAccount key={actor.sub} roleLabel={labels[actor.role]} />
         )}
@@ -592,16 +591,15 @@ export function App() {
             </div>
             <section className="welcome">
               <div>
-                <div className="eyebrow">CONTIGO, EN CADA PASO</div>
                 <h1>
                   {operator
                     ? "Expedientes asignados"
-                    : "Registra y consulta tus siniestros"}
+                    : canCreate ? "Un paso más cerca de resolver tu trámite" : "Portal de siniestros"}
                 </h1>
                 <p>
                   {operator
                     ? "Organiza, revisa y da seguimiento a los expedientes asignados."
-                    : "Registra y consulta tus trámites de forma fácil, clara y segura."}
+                    : canCreate ? "Cárganos tus documentos y consulta aquí cómo avanza tu solicitud." : "Consulta los expedientes y las herramientas de tu perfil."}
                 </p>
                 {canCreate && (
                   <>
@@ -739,7 +737,6 @@ export function App() {
                 <button className="secondary" onClick={() => go("Documentos")}>
                   Consultar documentos <ArrowRight size={15} />
                 </button>
-                {supportPhone && <p>Siniestros Paramita · <a href={`tel:${supportPhone}`}>{supportPhone}</a></p>}
                 <span className="muted">
                   18 aseguradoras · 7 ramos en el catálogo
                 </span>
@@ -923,6 +920,88 @@ export function App() {
     </div>
   );
 }
+function ClaimStatusChat({ actor, onOpen }: { actor: Actor; onOpen: (claim: Claim) => void }) {
+  const greeting = "Hola. Puedo consultar el estatus de tus trámites. Escribe el folio que aparece en Mis siniestros o selecciona Ver mis trámites.";
+  const [history, setHistory] = useState([{ author: "Asistente", text: greeting }]);
+  const [question, setQuestion] = useState("");
+  const [choices, setChoices] = useState<Claim[]>([]);
+  const [current, setCurrent] = useState<Claim>();
+  const [busy, setBusy] = useState(false);
+  const own = (claim: Claim) => claim.owner === actor.sub && claim.tenant === actor.tenant;
+  const reply = (text: string) => setHistory((log) => [...log, { author: "Asistente", text }]);
+
+  async function ask(text: string, choice?: Claim) {
+    const prompt = text.trim();
+    if (!prompt || busy) return;
+    setHistory((log) => [...log, { author: "Tú", text: prompt }]);
+    setQuestion("");
+    setBusy(true);
+    setChoices([]);
+    try {
+      const folio = prompt.match(/\bSIN-(?:2026-)?[a-z0-9]+\b/i)?.[0].toUpperCase();
+      const listRequested = /\b(mis|todos|listar|ver)\b/i.test(prompt);
+      const relevant = /estatus|estado|avance|seguimiento|siniestro|tr[aá]mite|expediente|solicitud|folio|c[oó]mo va|qu[eé] falta/i.test(prompt);
+      if (!choice && !folio && !relevant) {
+        reply("Puedo decirte en qué etapa está tu solicitud. Escribe el folio o selecciona Ver mis trámites.");
+        return;
+      }
+      const cases = choice || (current && !folio && !listRequested) ? [] : (await api.listClaims()).filter(own);
+      const match = folio ? cases.filter((claim) => shortId(claim.id) === folio) : cases;
+      const selected = choice ?? (current && !folio && !listRequested ? current : match.length === 1 ? match[0] : undefined);
+      if (!selected) {
+        setChoices(match);
+        reply(match.length
+          ? "Selecciona el trámite que quieres consultar."
+          : folio ? "Ese folio no aparece entre tus trámites. Revisa el folio o selecciona Ver mis trámites." : "Aún no tienes trámites registrados.");
+        return;
+      }
+      const claim = await api.getClaim(selected.id);
+      if (!own(claim)) throw new Error("Ese trámite no está disponible.");
+      setCurrent(claim);
+      const status = publicStatus(claim.status) ?? claim.status;
+      const guidance = status === "Borrador"
+        ? " Puedes completar el borrador desde tu expediente."
+        : status === "Documentos pendientes" || status === "Resultado informado"
+          ? " Abre tu expediente para ver los detalles."
+          : "";
+      reply(`${shortId(claim.id)} · ${procedureLabel(claim)}. Estatus: ${status}. Última actualización: ${date(claim.updatedAt)}.${guidance}`);
+    } catch (error) {
+      reply(api.accessErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <PageHeading title="Consulta el estatus de tu trámite" text="Pregunta por el avance de un expediente o búscalo con su folio." />
+      <section className="panel claim-chat" aria-label="Asistente de trámites">
+        <div className="chat-history" role="log" aria-live="polite">
+          {history.map((entry, index) => (
+            <div key={index} className={entry.author === "Tú" ? "chat-user" : "chat-assistant"}>
+              <b>{entry.author}</b>
+              <p>{entry.text}</p>
+            </div>
+          ))}
+        </div>
+        <div className="chat-actions">
+          <button className="secondary" disabled={busy} onClick={() => void ask("Ver mis trámites")}>Ver mis trámites</button>
+          {current && <button className="secondary" disabled={busy} onClick={() => onOpen(current)}>Abrir {shortId(current.id)}</button>}
+          {choices.map((claim) => (
+            <button className="secondary" disabled={busy} key={claim.id} onClick={() => void ask(shortId(claim.id), claim)}>
+              {shortId(claim.id)} · {procedureLabel(claim)}
+            </button>
+          ))}
+        </div>
+        <form className="chat-compose" onSubmit={(event) => { event.preventDefault(); void ask(question); }}>
+          <input aria-label="Tu consulta" placeholder="¿Cómo va mi trámite?" maxLength={250} value={question} onChange={(e) => setQuestion(e.target.value)} />
+          <button className="primary" disabled={busy || !question.trim()}>{busy ? "Consultando…" : "Enviar"}</button>
+        </form>
+      </section>
+    </>
+  );
+}
+
 function PageHeading({
   title,
   text,
@@ -1544,6 +1623,7 @@ const newClaimSteps = [
   "Detalle del siniestro",
   "Revisión de datos",
   "Documentos",
+  "Confirmación",
 ];
 
 function NewClaimSteps({ step }: { step: number }) {
@@ -1650,7 +1730,6 @@ function NewClaim({
   if (savedClaim) {
     return (
       <>
-        <NewClaimSteps step={3} />
         <ClaimDetail
           c={savedClaim}
           actor={actor}
@@ -1856,13 +1935,11 @@ function NewClaim({
                   onChange={(e) => update("consent", e.target.checked)}
                 />
                 <span>
-                  {api.demo
-                    ? "Confirmo el uso de datos ficticios en esta demostración."
-                    : "Confirmo que la información es correcta y autorizo el registro de esta solicitud para su gestión por Paramita."}
+                  Confirmo que la información es correcta y autorizo el registro de esta solicitud para su gestión por Paramita.
                 </span>
               </label>
               <p className="muted">
-                Paramita recibirá la solicitud cuando pulses Enviar en Documentos.{" "}
+                Después de cargar tus documentos podrás revisarlos y enviar tu solicitud.{" "}
                 {configured
                   ? ""
                   : "Esta solicitud requiere revisión manual y definición de sus requisitos."}
@@ -1912,7 +1989,7 @@ function NewClaim({
               <b>Documentación guiada</b>
               <p>
                 {configured
-                  ? `Checklist de referencia para ${modalities[modality].toLowerCase()}.`
+                  ? "Verás los documentos obligatorios para el trámite que seleccionaste."
                   : "Adjunta los soportes de tu solicitud en el expediente."}
               </p>
             </div>
@@ -1962,6 +2039,8 @@ function ClaimDetail({
     [channel, setChannel] = useState(""),
     [evidence, setEvidence] = useState(""),
     [expiredClassification, setExpiredClassification] = useState(""),
+    [confirmation, setConfirmation] = useState(false),
+    [uploadType, setUploadType] = useState(""),
     [focusDocument, setFocusDocument] = useState(showDocumentCorrections ? corrections[0]?.type : undefined);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -2024,6 +2103,10 @@ function ClaimDetail({
   const current = currentClaimDocuments(c);
   const totalBytes = documentBytes(c);
   const rows = documentsForClaim(c).filter((r) => ["M", "C"].includes(r.mark));
+  const draftUpload = draft && customer;
+  const needsConfirmation = draftUpload && confirmation && tab === "Documentos";
+  const requestedRows = draftUpload && configured ? rows.filter((r) => r.mark === "M") : rows;
+  const selectedRow = requestedRows.find((row) => row.id === uploadType) ?? missing[0] ?? requestedRows[0];
   const historicalRows = configured
     ? documentsFor(c.modality).filter((row) => current.has(row.id) && !rows.some(({ id }) => id === row.id))
     : [];
@@ -2083,11 +2166,8 @@ function ClaimDetail({
   async function upload(type: string, file: File) {
     await perform(async () => {
       onUpdate(await api.upload(c, type, file));
-      notify(
-        api.demo
-          ? "Archivo guardado sólo en este navegador. Análisis de seguridad simulado."
-          : "Archivo recibido. Estamos comprobando su categoría con IA.",
-      );
+      setUploadType("");
+      notify("Archivo recibido");
     });
   }
   return (
@@ -2096,7 +2176,7 @@ function ClaimDetail({
         <ArrowLeft size={16} />
         {operator ? "Volver a la bandeja asignada" : "Volver a mis siniestros"}
       </button>
-      {!intake && draft && customer && <NewClaimSteps step={3} />}
+      {draftUpload && <NewClaimSteps step={needsConfirmation ? 4 : 3} />}
       {!intake && <section className="panel detail-head">
         <div className="detail-title">
           <span className="stat-icon blue">
@@ -2308,7 +2388,58 @@ function ClaimDetail({
             </aside>
           </div>
         )}
-        {tab === "Documentos" && (
+        {needsConfirmation && (
+          <section aria-labelledby="confirm-claim-heading">
+            <div className="section-heading">
+              <div>
+                <h2 id="confirm-claim-heading">Revisa y envía tu solicitud</h2>
+                <p>{procedureLabel(c)} · Póliza {c.policy} · {shortId(c.id)}</p>
+              </div>
+            </div>
+            <h3>Documentos cargados</h3>
+            {[...current.values()].some((d) => d.state === "UPLOADED") ? (
+              <ul className="confirmation-documents">
+                {[...current.values()].filter((d) => d.state === "UPLOADED").map((d) => (
+                  <li key={d.id}>
+                    <FileText size={20} />
+                    <div>
+                      <b>{rows.find((r) => r.id === d.type)?.label ?? historicalRows.find((r) => r.id === d.type)?.label ?? d.type}</b>
+                      <small>{d.name} · {(d.size / 1024).toFixed(0)} KB</small>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : <p>Aún no has cargado documentos.</p>}
+            {missing.length > 0 && (
+              <div className="info-banner">
+                <CircleAlert size={20} />
+                <div>
+                  <b>Completa estos documentos antes de enviar</b>
+                  <ul>{missing.map((row) => <li key={row.id}>{row.label}</li>)}</ul>
+                </div>
+              </div>
+            )}
+            {totalBytes > maxDocumentBytes && <p role="alert">Los documentos superan 10 MB en conjunto.</p>}
+            <div className="form-actions">
+              <button className="secondary" disabled={busy} onClick={() => setConfirmation(false)}>
+                <ArrowLeft size={16} /> Volver a documentos
+              </button>
+              <button
+                className="primary"
+                disabled={busy || missing.length > 0 || totalBytes > maxDocumentBytes}
+                onClick={() => void perform(async () => {
+                  onUpdate(await api.submitClaim(c));
+                  setConfirmation(false);
+                  setTab("Resumen");
+                  notify("Solicitud enviada a Paramita");
+                })}
+              >
+                Enviar solicitud <ArrowRight size={16} />
+              </button>
+            </div>
+          </section>
+        )}
+        {tab === "Documentos" && !needsConfirmation && (
           <>
             {corrections.length > 0 && (
               <div className="info-banner">
@@ -2336,41 +2467,21 @@ function ClaimDetail({
                 {(totalBytes / 1024 / 1024).toFixed(2)} de 10 MB
               </span>
             </div>
-            {draft && customer && !api.demo && (
-              <p>Cuando esté disponible, el resultado del análisis con IA aparecerá junto al PDF.</p>
-            )}
-            <div className="info-banner">
-              <CircleAlert size={19} />
-              <span>
-                {configured
-                  ? "Los documentos marcados como Mínimo se requieren para enviar. Adjunta los condicionales sólo si aplican."
-                  : "Los soportes son opcionales durante la recepción. Esta lista no constituye un checklist aprobado."}{" "}
-                Usa nombres sin acentos, con letras, números, espacios, guiones o guiones bajos.
-              </span>
-            </div>
-            {draft && customer && (
-              <div className="draft-send">
-                <p>
-                  {missing.length
-                    ? `Faltan ${missing.length} tipos de documento mínimo.`
-                    : "El borrador está listo. Al enviar, Paramita recibirá la solicitud y los archivos quedarán cerrados a cambios salvo que te pidan una corrección."}
-                </p>
-                <button
-                  className="primary"
-                  disabled={busy || missing.length > 0 || totalBytes > maxDocumentBytes}
-                  onClick={() => void perform(async () => {
-                    onUpdate(await api.submitClaim(c));
-                    notify("Solicitud enviada a Paramita");
-                  })}
-                >
-                  Enviar <ArrowRight size={16} />
-                </button>
-              </div>
+            {draftUpload && configured && (
+              <Field label={`Documento obligatorio · ${requestedRows.length - missing.length} de ${requestedRows.length} recibidos`}>
+                <select value={selectedRow?.id ?? ""} disabled={busy} onChange={(e) => setUploadType(e.target.value)}>
+                  {requestedRows.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.label} · {missing.some(({ id }) => id === row.id) ? "Pendiente" : "Recibido"}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             )}
             <div className="upload-list">
               {[
-                ...rows,
-                ...historicalRows.map((row) => ({ ...row, mark: "Histórico" })),
+                ...(draftUpload ? (selectedRow ? [selectedRow] : []) : rows),
+                ...(!draftUpload ? historicalRows.map((row) => ({ ...row, mark: "Histórico" })) : []),
                 ...(operator
                   ? [
                       {
@@ -2408,7 +2519,7 @@ function ClaimDetail({
                       {c.documents
                         .filter(
                           (d) =>
-                            d.type === r.id ||
+                            (d.type === r.id && (!draftUpload || d.id === current.get(r.id)?.id)) ||
                             (r.id === "INSURER-RECEIPT" && isReceipt(d.type)) ||
                             (r.id === "INSURER-RESULT" && isResolution(d.type)),
                         )
@@ -2488,7 +2599,17 @@ function ClaimDetail({
                 </div>
               ))}
             </div>
-            <p className="muted">Versión del checklist: {c.checklistVersion}</p>
+            {draftUpload && (
+              <div className="form-actions">
+                <button className="primary" disabled={busy} onClick={() => {
+                  setConfirmation(true);
+                  window.scrollTo(0, 0);
+                }}>
+                  Revisar solicitud <ArrowRight size={16} />
+                </button>
+              </div>
+            )}
+            {operator && <p className="muted">Versión del checklist: {c.checklistVersion}</p>}
           </>
         )}
         {tab === "Historial" && (
@@ -3012,7 +3133,7 @@ function Login({
         ? result.nextStep.totpSetupDetails.getSetupUri("Paramita").toString()
         : "");
     } catch (e) {
-      notify((e as Error).message);
+      notify(api.accessErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -3060,7 +3181,7 @@ function Login({
           <h1>
             {mode === "login" ? "Bienvenido a tu portal" : "Recupera tu acceso"}
           </h1>
-          <p>Gestiona tus trámites con confianza y seguridad.</p>
+          <p>Entra para registrar un siniestro o consultar cómo va tu solicitud.</p>
           {!step && (
             <Field label="Correo electrónico">
               <div className="input-icon">
@@ -3156,9 +3277,6 @@ function Login({
               Volver al inicio de sesión
             </button>
           )}
-          <p className="login-support">
-            ¿Necesitas una cuenta? Solicita tu acceso a Paramita.
-          </p>
           <div className="bottom-note">
             <LockKeyhole size={14} />
             Acceso protegido

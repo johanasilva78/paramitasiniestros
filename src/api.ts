@@ -22,17 +22,19 @@ import {
   canUploadDocument,
   documentBytes,
   maxDocumentBytes,
-  pdfFileName,
+  claimDocumentName,
   submitClaimDraft,
   documentsForClaim,
   canOperate,
+  canRead,
   transition,
   type Claim,
   type Actor,
   type Enrollment,
   type Modality,
 } from "../shared/domain";
-export const demo = import.meta.env.VITE_DEMO_MODE !== "false";
+export const demo = import.meta.env.VITE_DEMO_MODE === "true" ||
+  (import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE !== "false");
 let endpoint = "";
 export const demoActor: Actor = {
   sub: "demo-insured",
@@ -44,6 +46,15 @@ class ApiError extends Error {
   constructor(message: string, readonly status: number) {
     super(message);
   }
+}
+
+export function accessErrorMessage(error: unknown) {
+  if (!(error instanceof Error)) return "No se pudo completar el acceso. Intenta de nuevo.";
+  if (error.name === "ForbiddenException")
+    return "La protección de acceso bloqueó este intento.";
+  if (error.name === "UserAlreadyAuthenticatedException")
+    return "Ya hay una sesión abierta en este navegador.";
+  return error.message;
 }
 
 function read(): Claim[] {
@@ -59,7 +70,7 @@ export async function init() {
   const response = await fetch("/amplify_outputs.json");
   if (!response.ok)
     throw new Error(
-      "Falta la configuración AWS. Genera amplify_outputs.json y cópialo a public/.",
+      "El portal no está disponible en este momento.",
     );
   const outputs = await response.json();
   Amplify.configure(outputs);
@@ -73,7 +84,7 @@ export async function request<T>(
 ): Promise<T> {
   const session = await fetchAuthSession();
   const token = session.tokens?.idToken?.toString();
-  if (!token) throw new Error("Inicia sesión para continuar");
+  if (!token) throw new ApiError("Inicia sesión para continuar", 401);
   const r = await fetch(`${endpoint}${path}`, {
     method,
     headers: {
@@ -85,7 +96,10 @@ export async function request<T>(
   });
   if (!r.ok) {
     const data = await r.json().catch(() => null);
-    throw new ApiError(data?.error || "Error de conexión", r.status);
+    const message = r.status === 401
+      ? "Tu sesión no está disponible. Vuelve a iniciar sesión."
+      : r.status === 403 ? "El acceso a esta operación fue restringido." : "No se pudo completar la solicitud.";
+    throw new ApiError(data?.error || message, r.status);
   }
   return r.json();
 }
@@ -142,7 +156,7 @@ export async function login(
     if (!(error instanceof Error) || error.name !== "UserAlreadyAuthenticatedException") {
       throw error;
     }
-    await logout();
+    await signOut({ global: false });
     return signIn(credentials);
   }
 }
@@ -206,7 +220,7 @@ export async function listClaims() {
 export async function getClaim(id: string) {
   if (demo) {
     const c = read().find((c) => c.id === id);
-    if (!c) throw new Error("Expediente no encontrado");
+    if (!c || !canRead(actor, c)) throw new Error("Expediente no encontrado");
     return c;
   }
   return normalizeClaim(await request<Claim>(`/claims/${id}`));
@@ -321,8 +335,8 @@ export async function changeStatus(
   return updated;
 }
 export async function upload(c: Claim, type: string, file: File) {
-  if (!pdfFileName.test(file.name) || (file.type && file.type !== "application/pdf"))
-    throw new Error("Selecciona un PDF con un nombre que use letras sin acentos, números, espacios, guiones o guiones bajos");
+  if (!file.name.toLowerCase().endsWith(".pdf") || (file.type && file.type !== "application/pdf"))
+    throw new Error("Selecciona un archivo PDF");
   const evidence = isReceipt(type) || isResolution(type);
   if (file.size < 1 || file.size + (evidence ? 0 : documentBytes(c, type)) > maxDocumentBytes)
     throw new Error("Los documentos no pueden superar 10 MB en conjunto");
@@ -338,7 +352,6 @@ export async function upload(c: Claim, type: string, file: File) {
     const documentId = crypto.randomUUID();
     if (!(await file.slice(0, 512).text()).trimStart().startsWith("%PDF-"))
       throw new Error("El contenido del archivo no corresponde a un PDF");
-    await mock.saveMockFile(documentId, file);
     const all = read();
     const current = all.find((x) => x.id === c.id)!;
     if (!canUploadDocument(actor, current, type) || (!evidence &&
@@ -346,10 +359,11 @@ export async function upload(c: Claim, type: string, file: File) {
       throw new Error("La carga no está disponible para este documento");
     if (file.size + (evidence ? 0 : documentBytes(current, type)) > maxDocumentBytes)
       throw new Error("Los documentos no pueden superar 10 MB en conjunto");
+    await mock.saveMockFile(documentId, file);
     current.documents.push({
       id: documentId,
       type,
-      name: file.name,
+      name: claimDocumentName(current, type),
       size: file.size,
       mime,
       key: "demo",
@@ -368,7 +382,6 @@ export async function upload(c: Claim, type: string, file: File) {
     checksum: string;
   }>(`/claims/${c.id}/uploads`, "POST", {
     type,
-    name: file.name,
     size: file.size,
     mime,
     sha256,
